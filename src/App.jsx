@@ -88,26 +88,38 @@ const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 function buildSystemPrompt(mode, functionId, roleId) {
   const base = `You are an expert Instructional Designer with deep knowledge of ADDIE, SAM, Dick & Carey, Kemp Design Model, and Backwards Design.
 
-On the first message, produce a design blueprint with these sections:
+On the first message, produce TWO separate outputs divided by the exact separator "---PROGRAM_PLAN---".
+
+PART 1 — The strategic blueprint (before the separator):
 
 ## Recommended Design Model
 ## Learning Objectives
 ## Product Ramp
-## Program Outline
 ## Key People to Meet
 ## Early Risks to Validate
 ## Evaluation Approach
 
-IMPORTANT FORMATTING RULES:
-- Never use markdown tables (no | pipes |). Use bullet points or numbered lists instead.
-- For activities with multiple attributes (owner, format, timing), write them as nested bullets like:
-  - Activity name
-    - Owner: manager
-    - Format: live call debrief
-    - Timing: week 2
-- Keep formatting clean and scannable.
+PART 2 — The week-by-week program plan (after the separator):
+Structure EVERY week like this, with no exceptions:
 
-On follow-up messages, respond conversationally — acknowledge what changed, explain why, then output a revised full blueprint with the same headers. Be focused; don't re-explain unchanged sections. Ask a concise follow-up question if needed.`;
+## Week N — [Title]
+### Product
+- activity (or "No product activities this week" if tapering off)
+### Program
+- activity
+- Owner: person
+- Format: format type
+- Timing: specific day or days
+
+Product activities should taper off naturally — heavy in early weeks, lighter in middle weeks, gone by the final weeks. Program activities run throughout.
+
+IMPORTANT FORMATTING RULES:
+- Never use markdown tables (no | pipes |)
+- Use bullet points only
+- Keep each week focused — 3 to 5 activities max per week
+- Be specific: name the activity, owner, format, and timing
+
+On follow-up messages, respond conversationally first, then output BOTH parts again with the separator between them. Keep the same structure.`;
 
   if (mode === "general") {
     return base + `
@@ -139,7 +151,7 @@ If specific names/titles were provided by the user, use them. Otherwise suggest 
 
 If learner transcripts or application responses are uploaded, extract insights about this specific hire and personalize the blueprint to their background, gaps, and communication style. Call out 1-2 specific insights from the transcript that shaped your recommendations.
 
-Think like a consultant who has built onboarding programs at B2B SaaS companies. Be concrete. Name specific activities, not categories. Keep the initial blueprint under 1000 words.`;
+Think like a consultant who has built onboarding programs at B2B SaaS companies. Be concrete. Name specific activities, not categories. Keep Part 1 under 600 words. Part 2 can be as long as needed to cover all weeks.`;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -235,10 +247,82 @@ function readFileAsBase64(file) {
   });
 }
 
-function exportToWord(blueprint, label) {
+function splitBlueprintAndPlan(text) {
+  const sep = "---PROGRAM_PLAN---";
+  const idx = text.indexOf(sep);
+  if (idx === -1) return { blueprint: text, programPlan: null };
+  return {
+    blueprint: text.slice(0, idx).trim(),
+    programPlan: text.slice(idx + sep.length).trim(),
+  };
+}
+
+function parseProgramWeeks(text) {
+  if (!text) return [];
+  const weeks = [];
+  const lines = text.split("\n");
+  let currentWeek = null;
+  let currentSection = null; // "product" | "program"
+
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) continue;
+
+    const weekMatch = t.match(/^##\s+Week\s+(\d+)\s*[—–-]?\s*(.*)/i);
+    if (weekMatch) {
+      if (currentWeek) weeks.push(currentWeek);
+      currentWeek = { number: parseInt(weekMatch[1]), title: weekMatch[2].trim(), product: [], program: [] };
+      currentSection = null;
+      continue;
+    }
+
+    if (!currentWeek) continue;
+
+    if (t.match(/^###\s+Product/i)) { currentSection = "product"; continue; }
+    if (t.match(/^###\s+Program/i)) { currentSection = "program"; continue; }
+
+    if (t.startsWith("- ") && currentSection) {
+      currentWeek[currentSection].push(t.slice(2));
+    }
+  }
+  if (currentWeek) weeks.push(currentWeek);
+  return weeks;
+}
+
+function exportToWord(blueprint, programPlan, programWeeks, label) {
   const date = new Date().toLocaleDateString();
-  const htmlContent = parseMarkdownToWord(blueprint);
-  const wordHTML = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><style>body{font-family:Arial,sans-serif;font-size:12pt;color:#1a1a1a;margin:1in}h1{font-size:20pt;font-weight:bold;color:#1a1a1a;border-bottom:2pt solid #c8a96e;padding-bottom:6pt;margin-bottom:12pt}h2{font-size:14pt;font-weight:bold;color:#7a5a2a;margin-top:18pt;margin-bottom:6pt}p{font-size:12pt;line-height:1.5;margin:4pt 0}ul,ol{margin:6pt 0 6pt 20pt}li{font-size:12pt;line-height:1.5;margin-bottom:3pt}strong{font-weight:bold}.meta{font-size:10pt;color:#666;margin-bottom:24pt}</style></head><body><h1>${label}</h1><p class="meta">Instructional Design Blueprint &nbsp;·&nbsp; ${date}</p>${htmlContent}</body></html>`;
+  const blueprintHtml = parseMarkdownToWord(blueprint || "");
+
+  // Build week-by-week HTML for Word
+  let planHtml = "";
+  if (programWeeks && programWeeks.length > 0) {
+    planHtml += `<h1 style="page-break-before:always">Program Plan — Week by Week</h1>`;
+    for (const week of programWeeks) {
+      planHtml += `<h2>Week ${week.number}${week.title ? " — " + week.title : ""}</h2>`;
+      if (week.product.length > 0 && week.product[0] !== "No product activities this week") {
+        planHtml += `<h3 style="font-size:11pt;font-weight:bold;color:#5a7a5a;margin:8pt 0 4pt">Product</h3><ul>`;
+        for (const item of week.product) {
+          const isSub = SUB_ITEM_PREFIXES.test(item);
+          planHtml += isSub
+            ? `<li style="margin-left:20pt;color:#666;font-size:10pt">${item}</li>`
+            : `<li>${item.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`;
+        }
+        planHtml += `</ul>`;
+      }
+      if (week.program.length > 0) {
+        planHtml += `<h3 style="font-size:11pt;font-weight:bold;color:#5a5a7a;margin:8pt 0 4pt">Program</h3><ul>`;
+        for (const item of week.program) {
+          const isSub = SUB_ITEM_PREFIXES.test(item);
+          planHtml += isSub
+            ? `<li style="margin-left:20pt;color:#666;font-size:10pt">${item}</li>`
+            : `<li>${item.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`;
+        }
+        planHtml += `</ul>`;
+      }
+    }
+  }
+
+  const wordHTML = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><style>body{font-family:Arial,sans-serif;font-size:12pt;color:#1a1a1a;margin:1in}h1{font-size:18pt;font-weight:bold;color:#1a1a1a;border-bottom:2pt solid #c8a96e;padding-bottom:6pt;margin-bottom:12pt}h2{font-size:13pt;font-weight:bold;color:#7a5a2a;margin-top:16pt;margin-bottom:5pt}p{font-size:12pt;line-height:1.5;margin:4pt 0}ul,ol{margin:6pt 0 6pt 20pt}li{font-size:11pt;line-height:1.5;margin-bottom:3pt}strong{font-weight:bold}.meta{font-size:10pt;color:#666;margin-bottom:24pt}</style></head><body><h1>${label}</h1><p class="meta">Instructional Design Blueprint &nbsp;·&nbsp; ${date}</p>${blueprintHtml}${planHtml}</body></html>`;
   const blob = new Blob([wordHTML], { type: "application/msword" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -537,7 +621,9 @@ export default function App() {
   const currentQ = questions[step - 1];
   const progress = Math.round((step / totalSteps) * 100);
   const revisionCount = chatHistory.filter(m => m.role === "assistant").length;
-  const latestBlueprint = [...chatHistory].filter(m => m.role === "assistant").pop()?.content || null;
+  const latestRaw = [...chatHistory].filter(m => m.role === "assistant").pop()?.content || null;
+  const { blueprint: latestBlueprint, programPlan: latestProgramPlan } = latestRaw ? splitBlueprintAndPlan(latestRaw) : { blueprint: null, programPlan: null };
+  const programWeeks = parseProgramWeeks(latestProgramPlan);
 
   const blueprintLabel = mode === "revenue"
     ? `${FUNCTIONS.find(f => f.id === selectedFn)?.label} ${ROLES.find(r => r.id === selectedRole)?.label} Onboarding`
@@ -915,6 +1001,24 @@ export default function App() {
     .btn-load:hover { background: rgba(200,169,110,0.16); }
     .btn-del { font-family: 'DM Sans', sans-serif; font-size: 0.74rem; color: #5a5d6a; background: none; border: 1px solid #2a2d38; border-radius: 7px; padding: 0.32rem 0.55rem; cursor: pointer; transition: all 0.15s; }
     .btn-del:hover { color: #e07070; border-color: #e0707044; }
+    .program-plan { margin-top: 2rem; border-top: 2px solid #c8a96e33; padding-top: 1.75rem; }
+    .plan-header { margin-bottom: 1.4rem; }
+    .plan-title { font-family: 'Playfair Display', serif; font-size: 1.3rem; font-weight: 700; color: #f0ebe0; margin-bottom: 0.25rem; }
+    .plan-subtitle { font-size: 0.78rem; color: #5a5d6a; font-weight: 300; }
+    .plan-week { background: #0d0f14; border: 1px solid #2a2d38; border-radius: 14px; margin-bottom: 0.9rem; overflow: hidden; }
+    .plan-week-header { display: flex; align-items: baseline; gap: 0.75rem; padding: 0.85rem 1.2rem; background: #13161e; border-bottom: 1px solid #1e2130; }
+    .plan-week-num { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: #c8a96e; flex-shrink: 0; }
+    .plan-week-title { font-size: 0.88rem; font-weight: 500; color: #e8e4dc; }
+    .plan-week-body { padding: 1rem 1.2rem; display: flex; flex-direction: column; gap: 1rem; }
+    .plan-section { display: flex; flex-direction: column; gap: 0.4rem; }
+    .plan-section-label { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; padding: 0.2rem 0.55rem; border-radius: 4px; display: inline-block; width: fit-content; }
+    .product-label { color: #6aaa88; background: rgba(106,170,136,0.1); border: 1px solid rgba(106,170,136,0.2); }
+    .program-label { color: #7a9acc; background: rgba(122,154,204,0.1); border: 1px solid rgba(122,154,204,0.2); }
+    .plan-list { list-style: none; padding: 0; margin: 0.25rem 0 0 0; display: flex; flex-direction: column; gap: 0.25rem; }
+    .plan-item { font-size: 0.86rem; font-weight: 400; color: #c8c4bc; line-height: 1.5; padding-left: 0.85rem; position: relative; }
+    .plan-item::before { content: '–'; position: absolute; left: 0; color: #4a4d5a; }
+    .plan-sub { font-size: 0.78rem; font-weight: 300; color: #6a6d7a; line-height: 1.4; padding-left: 1.6rem; position: relative; }
+    .plan-sub::before { content: '·'; position: absolute; left: 0.85rem; color: #3a3d4a; }
   `;
 
   return (
@@ -1066,14 +1170,70 @@ export default function App() {
                     </div>
                     <div className="export-bar">
                       <button className="btn-ghost gold" onClick={() => setShowSaveModal(true)}>⬇ Save</button>
-                      <button className="btn-ghost" onClick={() => { if (latestBlueprint) exportToWord(latestBlueprint, blueprintLabel); }}>↓ Export Word Doc</button>
+                      <button className="btn-ghost" onClick={() => { if (latestRaw) exportToWord(latestBlueprint, latestProgramPlan, programWeeks, blueprintLabel); }}>↓ Export Word Doc</button>
                     </div>
                   </div>
                   <AnswersSummary />
+
+                  {/* Blueprint chat bubbles — only show last assistant message */}
                   <div className="chat-area">
-                    {chatHistory.map((msg, i) => <ChatBubble key={i} msg={msg} />)}
+                    {chatHistory.filter(m => m.role === "user" && m.isChat).map((msg, i) => (
+                      <div key={i} className="chat-bubble user-bubble">
+                        <div className="bubble-label">You</div>
+                        <div className="bubble-text">{msg.content}</div>
+                      </div>
+                    ))}
+                    {latestBlueprint && (
+                      <div className="chat-bubble ai-bubble">
+                        <div className="bubble-label">Blueprint</div>
+                        <div className="result-body" dangerouslySetInnerHTML={{ __html: parseMarkdown(latestBlueprint) }} />
+                      </div>
+                    )}
                     {loading && <div className="loading-inline"><div className="spinner" /><div className="loading-text">Revising blueprint…</div></div>}
                   </div>
+
+                  {/* Program Plan */}
+                  {programWeeks.length > 0 && !loading && (
+                    <div className="program-plan">
+                      <div className="plan-header">
+                        <div className="plan-title">Program Plan</div>
+                        <div className="plan-subtitle">Week-by-week — scroll to review, then export for your manager and new hire</div>
+                      </div>
+                      {programWeeks.map(week => (
+                        <div key={week.number} className="plan-week">
+                          <div className="plan-week-header">
+                            <span className="plan-week-num">Week {week.number}</span>
+                            {week.title && <span className="plan-week-title">{week.title}</span>}
+                          </div>
+                          <div className="plan-week-body">
+                            {week.product.length > 0 && week.product[0] !== "No product activities this week" && (
+                              <div className="plan-section">
+                                <div className="plan-section-label product-label">Product</div>
+                                <ul className="plan-list">
+                                  {week.product.map((item, i) => {
+                                    const isSubItem = SUB_ITEM_PREFIXES.test(item);
+                                    return <li key={i} className={isSubItem ? "plan-sub" : "plan-item"}>{item}</li>;
+                                  })}
+                                </ul>
+                              </div>
+                            )}
+                            {week.program.length > 0 && (
+                              <div className="plan-section">
+                                <div className="plan-section-label program-label">Program</div>
+                                <ul className="plan-list">
+                                  {week.program.map((item, i) => {
+                                    const isSubItem = SUB_ITEM_PREFIXES.test(item);
+                                    return <li key={i} className={isSubItem ? "plan-sub" : "plan-item"}>{item}</li>;
+                                  })}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <div ref={bottomRef} />
                   {error && <div className="error-msg">{error}</div>}
                   {!loading && (

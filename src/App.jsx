@@ -1043,6 +1043,15 @@ export default function App() {
                   </div>
                 </div>
               )}
+              {!loading && error && chatHistory.length <= 1 && (
+                <div className="error-state">
+                  <div className="error-msg">{error}</div>
+                  <div className="btn-row" style={{ marginTop: "1.25rem" }}>
+                    <button className="btn-back" onClick={() => { setView("questions"); setStep(questions.length); setError(""); }}>← Back to questions</button>
+                    <button className="btn-primary" onClick={() => { setError(""); runAnalysis(answers, companyCtx, learnerFiles); }}>Try again →</button>
+                  </div>
+                </div>
+              )}
               {chatHistory.length > 1 && (
                 <>
                   <div className="result-topbar">

@@ -614,6 +614,7 @@ export default function App() {
   const [savedBlueprints, setSavedBlueprints] = useState([]);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
+  const [showPlan, setShowPlan] = useState(false);
   const bottomRef = useRef(null);
 
   const questions = mode === "revenue" ? getRevenueQuestions(selectedRole) : GENERAL_QUESTIONS;
@@ -696,7 +697,7 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 2500,
+        max_tokens: 4000,
         system: sysPrompt || buildSystemPrompt(mode, selectedFn, selectedRole),
         messages: history.map(({ role, content }) => ({ role, content })),
       }),
@@ -728,7 +729,7 @@ export default function App() {
   };
 
   const handleEditSave = (newAnswers) => {
-    setAnswers(newAnswers); setShowEditor(false); setChatHistory([]);
+    setAnswers(newAnswers); setShowEditor(false); setChatHistory([]); setShowPlan(false);
     setView("results"); runAnalysis(newAnswers, companyCtx, learnerFiles);
   };
 
@@ -775,7 +776,7 @@ export default function App() {
   const reset = () => {
     setView("home"); setMode(null); setSelectedFn(null); setSelectedRole(null);
     setCompanyCtx({}); setStep(1); setAnswers({}); setLearnerFiles([]);
-    setChatHistory([]); setFeedbackInput(""); setError("");
+    setChatHistory([]); setFeedbackInput(""); setError(""); setShowPlan(false);
   };
 
   const AnswersSummary = () => (
@@ -1019,6 +1020,12 @@ export default function App() {
     .plan-item::before { content: '–'; position: absolute; left: 0; color: #4a4d5a; }
     .plan-sub { font-size: 0.78rem; font-weight: 300; color: #6a6d7a; line-height: 1.4; padding-left: 1.6rem; position: relative; }
     .plan-sub::before { content: '·'; position: absolute; left: 0.85rem; color: #3a3d4a; }
+    .plan-export-row { display: flex; justify-content: flex-end; padding-top: 1rem; margin-top: 0.5rem; border-top: 1px solid #1e2130; }
+    .plan-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+    .btn-reveal { font-family: 'DM Sans', sans-serif; font-size: 0.82rem; font-weight: 500; color: #c8a96e; background: rgba(200,169,110,0.08); border: 1px solid #c8a96e55; border-radius: 10px; padding: 0.6rem 1.2rem; cursor: pointer; transition: all 0.15s; white-space: nowrap; flex-shrink: 0; }
+    .btn-reveal:hover { background: rgba(200,169,110,0.16); }
+    .plan-preview { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.75rem; }
+    .plan-preview-pill { font-size: 0.72rem; font-weight: 400; color: #5a5d6a; background: #0d0f14; border: 1px solid #2a2d38; border-radius: 100px; padding: 0.3rem 0.75rem; }
   `;
 
   return (
@@ -1196,9 +1203,24 @@ export default function App() {
                   {programWeeks.length > 0 && !loading && (
                     <div className="program-plan">
                       <div className="plan-header">
-                        <div className="plan-title">Program Plan</div>
-                        <div className="plan-subtitle">Week-by-week — scroll to review, then export for your manager and new hire</div>
+                        <div className="plan-title-row">
+                          <div>
+                            <div className="plan-title">Program Plan</div>
+                            <div className="plan-subtitle">{programWeeks.length} weeks · scroll to review, then export for your manager and new hire</div>
+                          </div>
+                          {!showPlan && (
+                            <button className="btn-reveal" onClick={() => setShowPlan(true)}>View Program Plan ↓</button>
+                          )}
+                        </div>
                       </div>
+                      {!showPlan && (
+                        <div className="plan-preview">
+                          {programWeeks.map(w => (
+                            <div key={w.number} className="plan-preview-pill">Week {w.number}{w.title ? ` — ${w.title}` : ""}</div>
+                          ))}
+                        </div>
+                      )}
+                      {showPlan && (
                       {programWeeks.map(week => (
                         <div key={week.number} className="plan-week">
                           <div className="plan-week-header">
@@ -1231,6 +1253,10 @@ export default function App() {
                           </div>
                         </div>
                       ))}
+                      <div className="plan-export-row">
+                        <button className="btn-primary" onClick={() => { if (latestRaw) exportToWord(latestBlueprint, latestProgramPlan, programWeeks, blueprintLabel); }}>↓ Export Word Doc</button>
+                      </div>
+                      )}
                     </div>
                   )}
 

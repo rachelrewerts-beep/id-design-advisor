@@ -139,7 +139,7 @@ If specific names/titles were provided by the user, use them. Otherwise suggest 
 
 If learner transcripts or application responses are uploaded, extract insights about this specific hire and personalize the blueprint to their background, gaps, and communication style. Call out 1-2 specific insights from the transcript that shaped your recommendations.
 
-Think like a consultant who has built onboarding programs at B2B SaaS companies. Be concrete. Name specific activities, not categories. Keep the initial blueprint under 800 words.`;
+Think like a consultant who has built onboarding programs at B2B SaaS companies. Be concrete. Name specific activities, not categories. Keep the initial blueprint under 1000 words.`;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -157,9 +157,11 @@ function formatAnswers(answers, questions) {
   }).filter(Boolean).join("\n\n");
 }
 
+const SUB_ITEM_PREFIXES = /^(Owner|Format|Timing|Week|Day|Duration|Who|When|How):/i;
+
 function parseMarkdown(text) {
   const lines = text.split("\n");
-  let html = ""; let inUl = false; let inOl = false; let ulDepth = 0;
+  let html = ""; let inUl = false; let inOl = false;
 
   const closeList = () => {
     if (inUl) { html += "</ul>"; inUl = false; }
@@ -167,9 +169,12 @@ function parseMarkdown(text) {
   };
 
   for (const line of lines) {
+    const raw = line;
     const t = line.trim();
-    // Skip markdown table lines
     if (t.startsWith("|") || t.match(/^\|?[-:]+\|/)) continue;
+
+    const isIndented = raw.match(/^(\s{2,}|\t)- /);
+    const isSubKeyword = t.startsWith("- ") && SUB_ITEM_PREFIXES.test(t.slice(2));
 
     if (t.startsWith("## ")) {
       closeList();
@@ -177,10 +182,10 @@ function parseMarkdown(text) {
     } else if (t.match(/^(\d+)\. /)) {
       if (!inOl) { closeList(); html += "<ol>"; inOl = true; }
       html += `<li>${t.replace(/^\d+\. /, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`;
-    } else if (t.startsWith("  - ") || t.startsWith("    - ")) {
-      // nested bullet — render as sub-item
+    } else if (isIndented || isSubKeyword) {
       if (!inUl) { html += "<ul>"; inUl = true; }
-      html += `<li class="sub-item">${t.replace(/^\s+- /, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`;
+      const content = t.replace(/^-\s*/, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      html += `<li class="sub-item">${content}</li>`;
     } else if (t.startsWith("- ")) {
       if (!inUl) { closeList(); html += "<ul>"; inUl = true; }
       html += `<li>${t.slice(2).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`;
@@ -605,7 +610,7 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 1400,
+        max_tokens: 2500,
         system: sysPrompt || buildSystemPrompt(mode, selectedFn, selectedRole),
         messages: history.map(({ role, content }) => ({ role, content })),
       }),

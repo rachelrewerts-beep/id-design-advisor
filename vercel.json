@@ -7,18 +7,7 @@
   ],
   "functions": {
     "api/claude.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
-  },
-  "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        {
-          "key": "x-vercel-body-size-limit",
-          "value": "10mb"
-        }
-      ]
-    }
-  ]
+  }
 }

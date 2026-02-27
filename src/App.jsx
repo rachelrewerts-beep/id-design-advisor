@@ -15,6 +15,15 @@ const ROLES = [
   { id: "director", label: "Director", sub: "Org leader, strategic scope" },
 ];
 
+const METHODOLOGIES = [
+  "MEDDIC",
+  "Challenger",
+  "SPIN",
+  "Command of the Message",
+  "Business Review Framework",
+  "Other",
+];
+
 const ROLE_FUNCTION_CONTEXT = {
   cs: {
     csm: "CSM onboarding: ramp to autonomous customer calls, QBR ownership, renewal conversations, product fluency, and strategic account management.",
@@ -49,19 +58,30 @@ const GENERAL_QUESTIONS = [
   { id: "constraints", label: "Any key constraints?", hint: "Budget, stakeholder dynamics, tools available, team capacity", type: "textarea" },
 ];
 
-const REVENUE_QUESTIONS = [
+const REVENUE_QUESTIONS_BASE = [
   { id: "timeline", label: "What's the onboarding timeline?", hint: "How long from start date to expected full productivity?", type: "single", options: ["2-4 weeks", "4-8 weeks", "8-12 weeks (standard)", "3-6 months (complex role)"] },
   { id: "teamSize", label: "How many people are being onboarded?", type: "single", options: ["1 person (individual)", "2-5 people (small cohort)", "6-15 people (team)", "15+ people (program scale)"] },
   { id: "contentClarity", label: "How well-defined is the existing onboarding?", hint: "Are you building from scratch or improving something that exists?", type: "single", options: ["Starting from scratch", "Some docs exist, no real structure", "Structured program exists, needs improvement", "Strong program, needs role-specific tuning"] },
   { id: "learnerExperience", label: "What's the hire's background?", type: "single", options: ["New to this function entirely", "Function experience, new to the industry", "Industry experience, new to this company", "Experienced and seasoned, just needs context"] },
   { id: "successLooks", label: "What does 'fully ramped' look like?", hint: "What specific thing should they be able to do autonomously that they can't on day 1?", type: "textarea" },
-  { id: "outcomeType", label: "What's the biggest ramp risk at this company?", type: "multi", options: ["Product/technical knowledge gaps", "Customer/prospect conversation confidence", "Internal process and tools confusion", "Culture and stakeholder navigation", "Manager not equipped to coach"] },
-  { id: "deliveryOwner", label: "Who will own delivery day-to-day?", type: "single", options: ["Direct manager", "Dedicated enablement/L&D team", "Onboarding buddy / peer", "A blend — manager + peer + structured content"] },
+  { id: "outcomeType", label: "What's the biggest ramp risk at this company?", hint: "Consider both company-side factors (limited manager bandwidth, no structured playbook, unclear ICP) and hire-side gaps you've observed (confidence, product knowledge, process familiarity). Select all that apply.", type: "multi", options: ["Product/technical knowledge gaps", "Customer/prospect conversation confidence", "Internal process and tools confusion", "Culture and stakeholder navigation", "Manager not equipped to coach", "No structured playbook or content to ramp from"] },
+  { id: "deliveryOwner", label: "Who will own delivery day-to-day?", type: "single", options: ["Direct manager", "Dedicated enablement/L&D team", "Onboarding buddy / peer", "A blend — manager + SME + peer + structured content"] },
   { id: "evaluationPriority", label: "How will you measure onboarding success?", type: "single", options: ["Time-to-first-milestone (call, deal, ticket)", "Manager confidence score at 30/60/90", "Retention at 6 months", "Hard revenue / retention metrics"] },
   { id: "constraints", label: "Any key constraints?", hint: "Manager bandwidth, tool limitations, remote vs. in-person, existing content you must use", type: "textarea" },
 ];
 
+const PRODUCT_RAMP_QUESTIONS_IC = [
+  { id: "productRampNeeded", label: "How much product ramp does this hire need?", hint: "Consider their background and how technical your product is", type: "single", options: ["Significant — they're new to this type of product entirely", "Moderate — they have general familiarity but not your specific product", "Light — they have directly relevant product experience", "Minimal — product knowledge isn't a core requirement for this role"] },
+  { id: "productRampSuccess", label: "What does product readiness look like for this role?", hint: "Select all that apply — these become product ramp milestones in the blueprint", type: "multi", options: ["Can answer common customer questions on a live call without escalating", "Can navigate the product and find key reports independently", "Can mimic a customer's workflow to troubleshoot issues", "Can demo or walk through core use cases confidently", "Understands product positioning and competitive differentiation"] },
+];
+
+const PRODUCT_RAMP_QUESTIONS_DIRECTOR = [
+  { id: "productRampNeeded", label: "How much product orientation does this leader need?", type: "single", options: ["Deep — they'll be hands-on with the product regularly", "Moderate — they need enough to coach their team and talk to customers", "Light — high-level awareness is sufficient for this role"] },
+];
+
 const STORAGE_KEY = "id_advisor_blueprints";
+const MAX_FILE_SIZE_MB = 2;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
 // ── System prompts ────────────────────────────────────────────────────────────
 
@@ -72,9 +92,20 @@ On the first message, produce a design blueprint with these sections:
 
 ## Recommended Design Model
 ## Learning Objectives
+## Product Ramp
 ## Program Outline
+## Key People to Meet
 ## Early Risks to Validate
 ## Evaluation Approach
+
+IMPORTANT FORMATTING RULES:
+- Never use markdown tables (no | pipes |). Use bullet points or numbered lists instead.
+- For activities with multiple attributes (owner, format, timing), write them as nested bullets like:
+  - Activity name
+    - Owner: manager
+    - Format: live call debrief
+    - Timing: week 2
+- Keep formatting clean and scannable.
 
 On follow-up messages, respond conversationally — acknowledge what changed, explain why, then output a revised full blueprint with the same headers. Be focused; don't re-explain unchanged sections. Ask a concise follow-up question if needed.`;
 
@@ -87,19 +118,36 @@ Be specific and practical. If transcript or application content is uploaded, ext
   const roleContext = ROLE_FUNCTION_CONTEXT[functionId]?.[roleId] || "";
   const fnLabel = FUNCTIONS.find(f => f.id === functionId)?.label || functionId;
   const roleLabel = ROLES.find(r => r.id === roleId)?.label || roleId;
+  const isDirector = roleId === "director";
 
   return base + `
 
 You are designing a ${fnLabel} onboarding program for a ${roleLabel}. Context: ${roleContext}
 
-COMPANY CONTEXT: If the user has provided methodology, ICP, or company documents, use them to make every section company-specific rather than generic. Reference their actual methodology names, ICP characteristics, product use cases, and internal terminology wherever possible. The program outline should reflect their real stack and process, not generic best practices.
+COMPANY CONTEXT: If the user has provided methodology, ICP, stakeholders, or company documents, use them to make every section company-specific. Reference actual methodology names, ICP characteristics, product use cases, and internal terminology. The program outline should reflect their real stack and process.
 
-If learner transcripts or application responses are uploaded, extract insights about this specific hire and personalize the blueprint to their background, gaps, and communication style.
+PRODUCT RAMP SECTION: 
+${isDirector
+  ? "For a Director, product ramp is about strategic orientation — watching customer videos, understanding positioning, and getting enough product context to coach their team and speak credibly to customers. Keep this section brief (3-5 bullets). Emphasize self-led learning: recorded demos, customer call recordings, shadowing a product walkthrough."
+  : "For this role, product ramp is a critical milestone. Design it as a self-led progression: recorded videos and documentation first, then hands-on practice in the application, then observed practice on a live call. Include specific success milestones based on what the user indicated (e.g. can answer customer questions on a call, can find key reports, can mimic customer workflows). Make it concrete — name the activity type, not just the category."}
 
-Think like a consultant who has built CS, Support, and Sales onboarding programs at B2B SaaS companies scaling from 10 to 100-person revenue teams. Be concrete. Name specific activities, not categories. Keep the initial blueprint under 750 words.`;
+KEY PEOPLE TO MEET SECTION:
+Based on the role, function, and any stakeholders provided, suggest a structured meeting plan:
+- Week 1: Internal orientation meetings (direct manager, team members, immediate cross-functional partners)
+- Week 2: Broader stakeholder meetings (adjacent teams, key internal resources, leadership where appropriate)
+If specific names/titles were provided by the user, use them. Otherwise suggest role-based recommendations appropriate to the function and seniority level.
+
+If learner transcripts or application responses are uploaded, extract insights about this specific hire and personalize the blueprint to their background, gaps, and communication style. Call out 1-2 specific insights from the transcript that shaped your recommendations.
+
+Think like a consultant who has built onboarding programs at B2B SaaS companies. Be concrete. Name specific activities, not categories. Keep the initial blueprint under 800 words.`;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function getRevenueQuestions(roleId) {
+  const productQs = roleId === "director" ? PRODUCT_RAMP_QUESTIONS_DIRECTOR : PRODUCT_RAMP_QUESTIONS_IC;
+  return [...REVENUE_QUESTIONS_BASE, ...productQs];
+}
 
 function formatAnswers(answers, questions) {
   return questions.map(q => {
@@ -111,15 +159,56 @@ function formatAnswers(answers, questions) {
 
 function parseMarkdown(text) {
   const lines = text.split("\n");
-  let html = ""; let inUl = false;
+  let html = ""; let inUl = false; let inOl = false; let ulDepth = 0;
+
+  const closeList = () => {
+    if (inUl) { html += "</ul>"; inUl = false; }
+    if (inOl) { html += "</ol>"; inOl = false; }
+  };
+
   for (const line of lines) {
     const t = line.trim();
-    if (t.startsWith("## ")) { if (inUl) { html += "</ul>"; inUl = false; } html += `<h2>${t.slice(3)}</h2>`; }
-    else if (t.startsWith("- ")) { if (!inUl) { html += "<ul>"; inUl = true; } html += `<li>${t.slice(2).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`; }
-    else if (t === "") { if (inUl) { html += "</ul>"; inUl = false; } }
-    else { if (inUl) { html += "</ul>"; inUl = false; } html += `<p>${t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</p>`; }
+    // Skip markdown table lines
+    if (t.startsWith("|") || t.match(/^\|?[-:]+\|/)) continue;
+
+    if (t.startsWith("## ")) {
+      closeList();
+      html += `<h2>${t.slice(3)}</h2>`;
+    } else if (t.match(/^(\d+)\. /)) {
+      if (!inOl) { closeList(); html += "<ol>"; inOl = true; }
+      html += `<li>${t.replace(/^\d+\. /, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`;
+    } else if (t.startsWith("  - ") || t.startsWith("    - ")) {
+      // nested bullet — render as sub-item
+      if (!inUl) { html += "<ul>"; inUl = true; }
+      html += `<li class="sub-item">${t.replace(/^\s+- /, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`;
+    } else if (t.startsWith("- ")) {
+      if (!inUl) { closeList(); html += "<ul>"; inUl = true; }
+      html += `<li>${t.slice(2).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`;
+    } else if (t === "") {
+      closeList();
+    } else {
+      closeList();
+      html += `<p>${t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</p>`;
+    }
   }
-  if (inUl) html += "</ul>";
+  closeList();
+  return html;
+}
+
+function parseMarkdownToWord(text) {
+  const lines = text.split("\n");
+  let html = ""; let inUl = false; let inOl = false;
+  for (const line of lines) {
+    const t = line.trim();
+    if (t.startsWith("|") || t.match(/^\|?[-:]+\|/)) continue;
+    if (t.startsWith("## ")) { if (inUl) { html += "</ul>"; inUl = false; } if (inOl) { html += "</ol>"; inOl = false; } html += `<h2>${t.slice(3)}</h2>`; }
+    else if (t.match(/^\d+\. /)) { if (!inOl) { if (inUl) { html += "</ul>"; inUl = false; } html += "<ol>"; inOl = true; } html += `<li>${t.replace(/^\d+\. /, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`; }
+    else if (t.startsWith("  - ") || t.startsWith("    - ")) { if (!inUl) { html += "<ul>"; inUl = true; } html += `<li style="margin-left:20pt">${t.replace(/^\s+- /, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`; }
+    else if (t.startsWith("- ")) { if (!inUl) { if (inOl) { html += "</ol>"; inOl = false; } html += "<ul>"; inUl = true; } html += `<li>${t.slice(2).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`; }
+    else if (t === "") { if (inUl) { html += "</ul>"; inUl = false; } if (inOl) { html += "</ol>"; inOl = false; } html += "<p>&nbsp;</p>"; }
+    else { if (inUl) { html += "</ul>"; inUl = false; } if (inOl) { html += "</ol>"; inOl = false; } html += `<p>${t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</p>`; }
+  }
+  if (inUl) html += "</ul>"; if (inOl) html += "</ol>";
   return html;
 }
 
@@ -143,17 +232,8 @@ function readFileAsBase64(file) {
 
 function exportToWord(blueprint, label) {
   const date = new Date().toLocaleDateString();
-  let htmlContent = "";
-  const lines = blueprint.split("\n"); let inUl = false;
-  for (const line of lines) {
-    const t = line.trim();
-    if (t.startsWith("## ")) { if (inUl) { htmlContent += "</ul>"; inUl = false; } htmlContent += `<h2>${t.slice(3)}</h2>`; }
-    else if (t.startsWith("- ")) { if (!inUl) { htmlContent += "<ul>"; inUl = true; } htmlContent += `<li>${t.slice(2).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`; }
-    else if (t === "") { if (inUl) { htmlContent += "</ul>"; inUl = false; } htmlContent += "<p>&nbsp;</p>"; }
-    else { if (inUl) { htmlContent += "</ul>"; inUl = false; } htmlContent += `<p>${t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</p>`; }
-  }
-  if (inUl) htmlContent += "</ul>";
-  const wordHTML = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><style>body{font-family:Arial,sans-serif;font-size:12pt;color:#1a1a1a;margin:1in}h1{font-size:20pt;font-weight:bold;color:#1a1a1a;border-bottom:2pt solid #c8a96e;padding-bottom:6pt;margin-bottom:12pt}h2{font-size:14pt;font-weight:bold;color:#7a5a2a;margin-top:18pt;margin-bottom:6pt}p{font-size:12pt;line-height:1.5;margin:4pt 0}ul{margin:6pt 0 6pt 20pt}li{font-size:12pt;line-height:1.5;margin-bottom:3pt}strong{font-weight:bold}.meta{font-size:10pt;color:#666;margin-bottom:24pt}</style></head><body><h1>${label}</h1><p class="meta">Instructional Design Blueprint &nbsp;·&nbsp; ${date}</p>${htmlContent}</body></html>`;
+  const htmlContent = parseMarkdownToWord(blueprint);
+  const wordHTML = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><style>body{font-family:Arial,sans-serif;font-size:12pt;color:#1a1a1a;margin:1in}h1{font-size:20pt;font-weight:bold;color:#1a1a1a;border-bottom:2pt solid #c8a96e;padding-bottom:6pt;margin-bottom:12pt}h2{font-size:14pt;font-weight:bold;color:#7a5a2a;margin-top:18pt;margin-bottom:6pt}p{font-size:12pt;line-height:1.5;margin:4pt 0}ul,ol{margin:6pt 0 6pt 20pt}li{font-size:12pt;line-height:1.5;margin-bottom:3pt}strong{font-weight:bold}.meta{font-size:10pt;color:#666;margin-bottom:24pt}</style></head><body><h1>${label}</h1><p class="meta">Instructional Design Blueprint &nbsp;·&nbsp; ${date}</p>${htmlContent}</body></html>`;
   const blob = new Blob([wordHTML], { type: "application/msword" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -161,24 +241,29 @@ function exportToWord(blueprint, label) {
   a.click(); URL.revokeObjectURL(url);
 }
 
-// ── Reusable file upload ──────────────────────────────────────────────────────
+// ── File Upload with context ──────────────────────────────────────────────────
 
-function FileUpload({ files, onAdd, onRemove, title, subtitle, maxFiles = 5 }) {
+function FileUpload({ files, onAdd, onRemove, onUpdateContext, title, subtitle, maxFiles = 5 }) {
   const inputRef = useRef();
+  const [fileError, setFileError] = useState("");
+
   const handleFiles = async (incoming) => {
+    setFileError("");
     for (const file of Array.from(incoming)) {
-      if (files.length >= maxFiles) break;
+      if (files.length >= maxFiles) { setFileError(`Maximum ${maxFiles} files allowed.`); break; }
+      if (file.size > MAX_FILE_SIZE_BYTES) { setFileError(`"${file.name}" is too large. Max file size is ${MAX_FILE_SIZE_MB}MB.`); continue; }
       const isText = file.type === "text/plain" || file.name.endsWith(".txt") || file.name.endsWith(".md");
       const isPDF = file.type === "application/pdf";
-      if (!isText && !isPDF) continue;
+      if (!isText && !isPDF) { setFileError(`"${file.name}" is not supported. Please upload .txt, .md, or .pdf files.`); continue; }
       try {
         let content, contentType;
         if (isText) { content = await readFileAsText(file); contentType = "text"; }
         else { content = await readFileAsBase64(file); contentType = "pdf"; }
-        onAdd({ name: file.name, content, contentType, size: file.size });
-      } catch (e) { console.error(e); }
+        onAdd({ name: file.name, content, contentType, size: file.size, context: "" });
+      } catch (e) { setFileError(`Could not read "${file.name}". Please try again.`); }
     }
   };
+
   return (
     <div className="upload-panel">
       <div className="upload-title-row">
@@ -189,15 +274,24 @@ function FileUpload({ files, onAdd, onRemove, title, subtitle, maxFiles = 5 }) {
       {files.length > 0 && (
         <div className="file-list">
           {files.map((f, i) => (
-            <div key={i} className="file-chip">
-              <span className="file-icon">{f.contentType === "pdf" ? "PDF" : "TXT"}</span>
-              <span className="file-name">{f.name}</span>
-              <span className="file-size">{(f.size / 1024).toFixed(0)}kb</span>
-              <button className="file-remove" onClick={() => onRemove(i)}>✕</button>
+            <div key={i} className="file-item">
+              <div className="file-chip">
+                <span className="file-icon">{f.contentType === "pdf" ? "PDF" : "TXT"}</span>
+                <span className="file-name">{f.name}</span>
+                <span className="file-size">{(f.size / 1024).toFixed(0)}kb</span>
+                <button className="file-remove" onClick={() => onRemove(i)}>✕</button>
+              </div>
+              <input
+                className="file-context-input"
+                placeholder="Optional: describe this file (e.g. 'current onboarding doc' or 'candidate LinkedIn export')"
+                value={f.context || ""}
+                onChange={e => onUpdateContext(i, e.target.value)}
+              />
             </div>
           ))}
         </div>
       )}
+      {fileError && <div className="file-error">{fileError}</div>}
       {files.length < maxFiles && (
         <div className="drop-zone" onClick={() => inputRef.current?.click()}
           onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add("dragging"); }}
@@ -206,7 +300,7 @@ function FileUpload({ files, onAdd, onRemove, title, subtitle, maxFiles = 5 }) {
           <input ref={inputRef} type="file" accept=".txt,.md,.pdf" multiple style={{ display: "none" }} onChange={e => handleFiles(e.target.files)} />
           <span className="drop-icon">↑</span>
           <span className="drop-text">Drop files or <span className="drop-link">browse</span></span>
-          <span className="drop-hint">.txt, .md, .pdf · up to {maxFiles} files</span>
+          <span className="drop-hint">.txt, .md, .pdf · max {MAX_FILE_SIZE_MB}MB per file · up to {maxFiles} files</span>
         </div>
       )}
     </div>
@@ -216,6 +310,20 @@ function FileUpload({ files, onAdd, onRemove, title, subtitle, maxFiles = 5 }) {
 // ── Company Context Step ──────────────────────────────────────────────────────
 
 function CompanyContextStep({ context, onChange }) {
+  const [showOtherMethodology, setShowOtherMethodology] = useState(
+    context.methodology && !METHODOLOGIES.slice(0, -1).includes(context.methodology) ? true : false
+  );
+
+  const handleMethodologySelect = (val) => {
+    if (val === "Other") {
+      setShowOtherMethodology(true);
+      onChange({ ...context, methodology: "", methodologySelected: "Other" });
+    } else {
+      setShowOtherMethodology(false);
+      onChange({ ...context, methodology: val, methodologySelected: val });
+    }
+  };
+
   return (
     <div className="company-context">
       <div className="cc-header">
@@ -226,19 +334,28 @@ function CompanyContextStep({ context, onChange }) {
 
       <div className="cc-field">
         <label className="cc-label">Sales or CS methodology</label>
-        <div className="cc-hint">e.g. MEDDIC, Challenger, SPIN, Command of the Message, Gainsight playbooks, EBR framework</div>
-        <textarea className="cc-input" rows={2}
-          placeholder="e.g. We use MEDDIC for qualification. Our CS team runs structured EBRs quarterly using a Gainsight scorecard..."
-          value={context.methodology || ""}
-          onChange={e => onChange({ ...context, methodology: e.target.value })}
-        />
+        <div className="cc-hint">Select the primary methodology this team uses</div>
+        <div className="methodology-grid">
+          {METHODOLOGIES.map(m => (
+            <button key={m}
+              className={`method-btn ${(context.methodologySelected || context.methodology) === m ? "selected" : ""}`}
+              onClick={() => handleMethodologySelect(m)}>{m}</button>
+          ))}
+        </div>
+        {showOtherMethodology && (
+          <input className="cc-input-single" style={{ marginTop: "0.6rem" }}
+            placeholder="Describe your methodology..."
+            value={context.methodology || ""}
+            onChange={e => onChange({ ...context, methodology: e.target.value, methodologySelected: "Other" })}
+          />
+        )}
       </div>
 
       <div className="cc-field">
         <label className="cc-label">Ideal Customer Profile (ICP)</label>
         <div className="cc-hint">Who are their customers? Size, industry, buyer persona, what they care about</div>
         <textarea className="cc-input" rows={2}
-          placeholder="e.g. Mid-market B2B SaaS companies, 100-500 employees, RevOps or CS leaders as primary buyers, care about retention and expansion..."
+          placeholder="e.g. Mid-market B2B SaaS, 100-500 employees, RevOps or CS leaders as primary buyers, care about retention and expansion..."
           value={context.icp || ""}
           onChange={e => onChange({ ...context, icp: e.target.value })}
         />
@@ -251,6 +368,16 @@ function CompanyContextStep({ context, onChange }) {
           placeholder="e.g. A customer success platform that helps CS teams reduce churn by surfacing health signals and automating playbooks..."
           value={context.product || ""}
           onChange={e => onChange({ ...context, product: e.target.value })}
+        />
+      </div>
+
+      <div className="cc-field">
+        <label className="cc-label">Key people this hire should meet</label>
+        <div className="cc-hint">List names and titles — the blueprint will suggest when to schedule each meeting (Week 1 vs Week 2)</div>
+        <textarea className="cc-input" rows={3}
+          placeholder={"e.g.\nJordan Lee, VP of Customer Success\nAlex Kim, Head of Product\nMaria Chen, Sales Director\nOnboarding buddy: Sam Rivera, Sr. CSM"}
+          value={context.stakeholders || ""}
+          onChange={e => onChange({ ...context, stakeholders: e.target.value })}
         />
       </div>
 
@@ -268,8 +395,13 @@ function CompanyContextStep({ context, onChange }) {
         files={context.files || []}
         onAdd={f => onChange({ ...context, files: [...(context.files || []), f] })}
         onRemove={i => onChange({ ...context, files: (context.files || []).filter((_, idx) => idx !== i) })}
+        onUpdateContext={(i, val) => {
+          const updated = [...(context.files || [])];
+          updated[i] = { ...updated[i], context: val };
+          onChange({ ...context, files: updated });
+        }}
         title="Upload company materials"
-        subtitle="Playbooks, existing onboarding docs, positioning guides, sales decks — Claude will read these and reference them in the blueprint."
+        subtitle="Playbooks, existing onboarding docs, positioning guides — Claude will read these and reference them in the blueprint."
         maxFiles={5}
       />
     </div>
@@ -378,36 +510,24 @@ function SaveModal({ label, onSave, onClose }) {
 // ── Main App ──────────────────────────────────────────────────────────────────
 
 export default function App() {
-  // Navigation
-  const [view, setView] = useState("home"); // home | mode_select | fn_select | role_select | company_ctx | questions | results | saved
-
-  // Mode
-  const [mode, setMode] = useState(null); // "general" | "revenue"
+  const [view, setView] = useState("home");
+  const [mode, setMode] = useState(null);
   const [selectedFn, setSelectedFn] = useState(null);
   const [selectedRole, setSelectedRole] = useState(null);
-
-  // Company context (revenue mode)
   const [companyCtx, setCompanyCtx] = useState({});
-
-  // Intake
   const [step, setStep] = useState(1);
   const [answers, setAnswers] = useState({});
   const [learnerFiles, setLearnerFiles] = useState([]);
-
-  // Results
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [chatHistory, setChatHistory] = useState([]);
   const [feedbackInput, setFeedbackInput] = useState("");
-
-  // Saved
   const [savedBlueprints, setSavedBlueprints] = useState([]);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
-
   const bottomRef = useRef(null);
 
-  const questions = mode === "revenue" ? REVENUE_QUESTIONS : GENERAL_QUESTIONS;
+  const questions = mode === "revenue" ? getRevenueQuestions(selectedRole) : GENERAL_QUESTIONS;
   const totalSteps = questions.length;
   const currentQ = questions[step - 1];
   const progress = Math.round((step / totalSteps) * 100);
@@ -419,9 +539,7 @@ export default function App() {
     : (answers.context?.slice(0, 40) || "Blueprint");
 
   useEffect(() => {
-    (() => {
-      try { const saved = localStorage.getItem(STORAGE_KEY); if (saved) setSavedBlueprints(JSON.parse(saved)); } catch {}
-    })();
+    try { const saved = localStorage.getItem(STORAGE_KEY); if (saved) setSavedBlueprints(JSON.parse(saved)); } catch {}
   }, []);
 
   useEffect(() => {
@@ -439,31 +557,27 @@ export default function App() {
   const buildInitialContent = (ans, compCtx, lFiles) => {
     const parts = [];
     const systemPrompt = buildSystemPrompt(mode, selectedFn, selectedRole);
-
-    // Intake answers
     let text = `Program Intake Answers:\n\n${formatAnswers(ans, questions)}`;
 
-    // Company context
     if (mode === "revenue") {
       const ctxParts = [];
       if (compCtx.methodology) ctxParts.push(`Methodology: ${compCtx.methodology}`);
       if (compCtx.icp) ctxParts.push(`ICP: ${compCtx.icp}`);
       if (compCtx.product) ctxParts.push(`Product: ${compCtx.product}`);
+      if (compCtx.stakeholders) ctxParts.push(`Key people to meet:\n${compCtx.stakeholders}`);
       if (compCtx.other) ctxParts.push(`Additional context: ${compCtx.other}`);
       if (ctxParts.length > 0) text += `\n\n---\nCOMPANY CONTEXT:\n${ctxParts.join("\n")}`;
 
-      // Company files
       if (compCtx.files?.length > 0) {
-        compCtx.files.forEach((f, i) => {
-          if (f.contentType === "text") {
-            const truncated = f.content.length > 6000 ? f.content.slice(0, 6000) + "\n[truncated]" : f.content;
-            text += `\n\n---\nCompany Document ${i + 1}: ${f.name}\n${truncated}`;
-          }
+        compCtx.files.filter(f => f.contentType === "text").forEach((f, i) => {
+          const truncated = f.content.length > 5000 ? f.content.slice(0, 5000) + "\n[truncated]" : f.content;
+          const ctx = f.context ? ` (${f.context})` : "";
+          text += `\n\n---\nCompany Document ${i + 1}: ${f.name}${ctx}\n${truncated}`;
         });
-        // Add PDF company files
-        compCtx.files.filter(f => f.contentType === "pdf").forEach((f, i) => {
+        compCtx.files.filter(f => f.contentType === "pdf").forEach(f => {
           parts.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: f.content } });
-          parts.push({ type: "text", text: `(Company document: ${f.name})` });
+          const ctx = f.context ? ` (${f.context})` : "";
+          parts.push({ type: "text", text: `(Company document: ${f.name}${ctx})` });
         });
       }
     }
@@ -471,14 +585,14 @@ export default function App() {
     text += "\n\nPlease provide your instructional design recommendation.";
     parts.unshift({ type: "text", text });
 
-    // Learner files
     lFiles.forEach(f => {
+      const ctx = f.context ? ` (${f.context})` : "";
       if (f.contentType === "text") {
         const truncated = f.content.length > 5000 ? f.content.slice(0, 5000) + "\n[truncated]" : f.content;
-        parts.push({ type: "text", text: `\n---\nLearner Document: ${f.name}\n${truncated}` });
+        parts.push({ type: "text", text: `\n---\nLearner Document: ${f.name}${ctx}\n${truncated}` });
       } else {
         parts.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: f.content } });
-        parts.push({ type: "text", text: `(Learner document: ${f.name})` });
+        parts.push({ type: "text", text: `(Learner document: ${f.name}${ctx})` });
       }
     });
 
@@ -491,7 +605,7 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 1200,
+        max_tokens: 1400,
         system: sysPrompt || buildSystemPrompt(mode, selectedFn, selectedRole),
         messages: history.map(({ role, content }) => ({ role, content })),
       }),
@@ -510,7 +624,10 @@ export default function App() {
     try {
       const text = await callAPI(newHistory, systemPrompt);
       setChatHistory([...newHistory, { role: "assistant", content: text }]);
-    } catch (e) { setError("Something went wrong: " + e.message); }
+    } catch (e) {
+      setError("Unfortunately, your blueprint did not generate. Please try again — if the issue continues, check your inputs and try with less uploaded content.");
+      console.error("Blueprint generation error:", e.message);
+    }
     setLoading(false);
   };
 
@@ -533,14 +650,17 @@ export default function App() {
     try {
       const text = await callAPI(newHistory);
       setChatHistory([...newHistory, { role: "assistant", content: text }]);
-    } catch { setError("Something went wrong. Please try again."); }
+    } catch (e) {
+      setError("Unfortunately, your blueprint did not generate. Please try again.");
+    }
     setLoading(false);
   };
 
   const handleSave = async (name, onSuccess) => {
     const bp = {
       id: Date.now(), name, savedAt: new Date().toLocaleDateString(),
-      mode, selectedFn, selectedRole, answers, companyCtx: { ...companyCtx, files: [] },
+      mode, selectedFn, selectedRole, answers,
+      companyCtx: { ...companyCtx, files: [] },
       chatHistory, uploadedFileNames: learnerFiles.map(f => f.name),
       label: blueprintLabel,
     };
@@ -599,7 +719,6 @@ export default function App() {
     </div>
   );
 
-  // ── CSS ───────────────────────────────────────────────────────────────────
   const CSS = `
     @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500&display=swap');
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -608,26 +727,19 @@ export default function App() {
     .shell.top { justify-content: flex-start; padding-top: 2.5rem; }
     .card { width: 100%; max-width: 700px; background: #13161e; border: 1px solid #2a2d38; border-radius: 20px; padding: 2.5rem; box-shadow: 0 40px 80px rgba(0,0,0,0.5); position: relative; }
     .card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #c8a96e, #e8c87a, #c8a96e); border-radius: 20px 20px 0 0; }
-
     .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; }
     .topbar-logo { font-family: 'Playfair Display', serif; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.25em; text-transform: uppercase; color: #c8a96e; }
     .topbar-nav { display: flex; gap: 1.25rem; }
     .topbar-nav button { font-family: 'DM Sans', sans-serif; font-size: 0.72rem; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #5a5d6a; background: none; border: none; cursor: pointer; transition: color 0.2s; padding: 0; }
     .topbar-nav button:hover, .topbar-nav button.active { color: #c8a96e; }
-
-    /* Home mode cards */
     .intro-headline { font-family: 'Playfair Display', serif; font-size: 2.4rem; font-weight: 900; line-height: 1.1; color: #f0ebe0; margin-bottom: 1rem; }
     .intro-sub { font-size: 0.92rem; font-weight: 300; color: #8a8d9a; line-height: 1.7; margin-bottom: 2rem; }
-    .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 0; }
+    .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
     .mode-card { background: #0d0f14; border: 1px solid #2a2d38; border-radius: 14px; padding: 1.5rem; cursor: pointer; transition: all 0.15s; text-align: left; }
     .mode-card:hover { border-color: #c8a96e66; background: #101318; }
     .mode-card-title { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 700; color: #f0ebe0; margin-bottom: 0.4rem; }
     .mode-card-sub { font-size: 0.78rem; color: #5a5d6a; font-weight: 300; line-height: 1.5; }
-    .mode-card-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.75rem; }
-    .mode-tag { font-size: 0.62rem; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; padding: 0.2rem 0.55rem; border-radius: 100px; border: 1px solid #2a2d38; color: #6a6d7a; }
     .models-footnote { font-size: 0.72rem; color: #3a3d4a; font-weight: 300; text-align: center; margin-top: 1rem; line-height: 1.5; }
-
-    /* Selector screens */
     .selector-title { font-family: 'Playfair Display', serif; font-size: 1.5rem; font-weight: 700; color: #f0ebe0; margin-bottom: 0.4rem; }
     .selector-sub { font-size: 0.85rem; color: #5a5d6a; font-weight: 300; margin-bottom: 1.5rem; }
     .fn-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; margin-bottom: 1.5rem; }
@@ -641,8 +753,6 @@ export default function App() {
     .role-card.selected { border-color: #c8a96e; background: rgba(200,169,110,0.06); }
     .role-label { font-size: 0.92rem; font-weight: 500; color: #e8e4dc; }
     .role-sub { font-size: 0.76rem; color: #5a5d6a; font-weight: 300; margin-top: 0.2rem; }
-
-    /* Company context */
     .company-context { display: flex; flex-direction: column; gap: 1.25rem; }
     .cc-header { display: flex; align-items: center; gap: 0.75rem; }
     .cc-title { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 700; color: #f0ebe0; }
@@ -654,13 +764,18 @@ export default function App() {
     .cc-input { width: 100%; background: #0d0f14; border: 1px solid #2a2d38; border-radius: 9px; padding: 0.75rem 1rem; font-family: 'DM Sans', sans-serif; font-size: 0.85rem; font-weight: 300; color: #e8e4dc; resize: vertical; outline: none; transition: border-color 0.2s; }
     .cc-input:focus { border-color: #c8a96e; }
     .cc-input::placeholder { color: #3a3d4a; }
-
-    /* Questions */
+    .cc-input-single { width: 100%; background: #0d0f14; border: 1px solid #2a2d38; border-radius: 9px; padding: 0.65rem 1rem; font-family: 'DM Sans', sans-serif; font-size: 0.85rem; font-weight: 300; color: #e8e4dc; outline: none; transition: border-color 0.2s; }
+    .cc-input-single:focus { border-color: #c8a96e; }
+    .cc-input-single::placeholder { color: #3a3d4a; }
+    .methodology-grid { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.35rem; }
+    .method-btn { font-family: 'DM Sans', sans-serif; font-size: 0.8rem; font-weight: 400; color: #8a8d9a; background: #0d0f14; border: 1px solid #2a2d38; border-radius: 8px; padding: 0.45rem 0.9rem; cursor: pointer; transition: all 0.12s; }
+    .method-btn:hover { border-color: #4a4d5a; color: #e8e4dc; }
+    .method-btn.selected { border-color: #c8a96e; color: #e8c87a; background: rgba(200,169,110,0.08); }
     .progress-bar { height: 2px; background: #1e2130; border-radius: 2px; margin-bottom: 2rem; overflow: hidden; }
     .progress-fill { height: 100%; background: linear-gradient(90deg, #c8a96e, #e8c87a); border-radius: 2px; transition: width 0.4s ease; }
     .step-label { font-size: 0.68rem; font-weight: 500; letter-spacing: 0.15em; text-transform: uppercase; color: #c8a96e; margin-bottom: 0.6rem; }
     .question-text { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 700; color: #f0ebe0; line-height: 1.3; margin-bottom: 0.4rem; }
-    .question-hint { font-size: 0.8rem; color: #5a5d6a; margin-bottom: 1.4rem; font-weight: 300; }
+    .question-hint { font-size: 0.8rem; color: #5a5d6a; margin-bottom: 1.4rem; font-weight: 300; line-height: 1.55; }
     .multi-hint { font-size: 0.68rem; color: #5a5d6a; margin-bottom: 0.8rem; letter-spacing: 0.05em; text-transform: uppercase; font-weight: 500; }
     .answer-input { width: 100%; background: #0d0f14; border: 1px solid #2a2d38; border-radius: 10px; padding: 0.85rem 1rem; font-family: 'DM Sans', sans-serif; font-size: 0.9rem; font-weight: 300; color: #e8e4dc; resize: vertical; outline: none; transition: border-color 0.2s; margin-bottom: 1.4rem; }
     .answer-input:focus { border-color: #c8a96e; }
@@ -669,8 +784,6 @@ export default function App() {
     .option-btn { width: 100%; text-align: left; background: #0d0f14; border: 1px solid #2a2d38; border-radius: 10px; padding: 0.8rem 1rem; font-family: 'DM Sans', sans-serif; font-size: 0.86rem; font-weight: 400; color: #8a8d9a; cursor: pointer; transition: all 0.12s; }
     .option-btn:hover { border-color: #4a4d5a; color: #e8e4dc; background: #161920; }
     .option-btn.selected { border-color: #c8a96e; color: #e8c87a; background: rgba(200,169,110,0.08); }
-
-    /* Buttons */
     .btn-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: 1.25rem; }
     .btn-back { font-family: 'DM Sans', sans-serif; font-size: 0.83rem; font-weight: 500; color: #5a5d6a; background: none; border: none; cursor: pointer; padding: 0.5rem 0; transition: color 0.2s; }
     .btn-back:hover { color: #8a8d9a; }
@@ -683,33 +796,33 @@ export default function App() {
     .btn-ghost.gold:hover { background: rgba(200,169,110,0.1); }
     .btn-skip { font-family: 'DM Sans', sans-serif; font-size: 0.78rem; color: #4a4d5a; background: none; border: none; cursor: pointer; transition: color 0.15s; }
     .btn-skip:hover { color: #8a8d9a; }
-
-    /* File upload */
     .upload-panel { background: #0a0c12; border: 1px solid #2a2d38; border-radius: 12px; padding: 1.1rem; margin-top: 0.5rem; }
     .upload-title-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.3rem; }
     .upload-title { font-size: 0.8rem; font-weight: 500; color: #c8c4bc; }
     .upload-badge { font-size: 0.6rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #5a5d6a; border: 1px solid #2a2d38; border-radius: 100px; padding: 0.15rem 0.5rem; }
     .upload-sub { font-size: 0.76rem; color: #5a5d6a; font-weight: 300; line-height: 1.5; margin-bottom: 0.75rem; }
-    .file-list { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.6rem; }
+    .file-list { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 0.6rem; }
+    .file-item { display: flex; flex-direction: column; gap: 0.3rem; }
     .file-chip { display: flex; align-items: center; gap: 0.45rem; background: #13161e; border: 1px solid #2a2d38; border-radius: 8px; padding: 0.45rem 0.7rem; }
     .file-icon { font-size: 0.6rem; font-weight: 600; letter-spacing: 0.06em; color: #5a5d6a; background: #1e2130; border-radius: 4px; padding: 0.15rem 0.35rem; flex-shrink: 0; }
     .file-name { font-size: 0.78rem; color: #c8c4bc; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .file-size { font-size: 0.68rem; color: #4a4d5a; flex-shrink: 0; }
     .file-remove { font-size: 0.72rem; color: #4a4d5a; background: none; border: none; cursor: pointer; transition: color 0.15s; }
     .file-remove:hover { color: #e07070; }
+    .file-context-input { width: 100%; background: #0d0f14; border: 1px solid #1e2130; border-radius: 7px; padding: 0.45rem 0.7rem; font-family: 'DM Sans', sans-serif; font-size: 0.75rem; font-weight: 300; color: #7a7d8a; outline: none; transition: border-color 0.2s; }
+    .file-context-input:focus { border-color: #c8a96e55; color: #c8c4bc; }
+    .file-context-input::placeholder { color: #2a2d38; }
+    .file-error { font-size: 0.76rem; color: #e07070; margin-bottom: 0.5rem; padding: 0.5rem 0.75rem; background: rgba(224,112,112,0.08); border-radius: 7px; border: 1px solid rgba(224,112,112,0.2); }
     .drop-zone { border: 1px dashed #2a2d38; border-radius: 9px; padding: 1rem; display: flex; flex-direction: column; align-items: center; gap: 0.25rem; cursor: pointer; transition: all 0.15s; }
     .drop-zone:hover, .drop-zone.dragging { border-color: #c8a96e66; background: rgba(200,169,110,0.04); }
     .drop-icon { font-size: 1.1rem; color: #4a4d5a; }
     .drop-text { font-size: 0.8rem; color: #6a6d7a; }
     .drop-link { color: #c8a96e; text-decoration: underline; }
     .drop-hint { font-size: 0.68rem; color: #4a4d5a; font-weight: 300; }
-
-    /* Results */
     .result-topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; flex-wrap: wrap; }
     .result-title { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 700; color: #f0ebe0; }
     .revision-note { font-size: 0.68rem; color: #5a5d6a; margin-top: 0.25rem; }
     .export-bar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
-
     .chat-area { display: flex; flex-direction: column; gap: 1.4rem; margin-bottom: 1.4rem; }
     .chat-bubble { display: flex; flex-direction: column; gap: 0.4rem; }
     .bubble-label { font-size: 0.63rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
@@ -717,13 +830,14 @@ export default function App() {
     .ai-bubble .bubble-label { color: #c8a96e; }
     .user-bubble .bubble-text { background: #0f1a18; border: 1px solid #1e3530; border-radius: 12px; padding: 0.85rem 1rem; font-size: 0.86rem; font-weight: 300; color: #9ad4c0; line-height: 1.6; }
     .result-body { background: #0d0f14; border: 1px solid #2a2d38; border-radius: 12px; padding: 1.4rem; line-height: 1.75; font-size: 0.88rem; font-weight: 300; color: #c8c4bc; }
-    .result-body h2 { font-family: 'Playfair Display', serif; font-size: 0.98rem; font-weight: 700; color: #e8c87a; margin-top: 1.3rem; margin-bottom: 0.4rem; }
+    .result-body h2 { font-family: 'Playfair Display', serif; font-size: 0.98rem; font-weight: 700; color: #e8c87a; margin-top: 1.3rem; margin-bottom: 0.4rem; background: rgba(200,169,110,0.06); padding: 0.4rem 0.75rem; border-radius: 6px; border-left: 3px solid #c8a96e; }
     .result-body h2:first-child { margin-top: 0; }
     .result-body ul { padding-left: 1.15rem; margin: 0.35rem 0; }
-    .result-body li { margin-bottom: 0.3rem; }
+    .result-body ol { padding-left: 1.3rem; margin: 0.35rem 0; }
+    .result-body li { margin-bottom: 0.35rem; }
+    .result-body li.sub-item { color: #7a7d8a; font-size: 0.84rem; margin-left: 0.75rem; margin-bottom: 0.2rem; }
     .result-body strong { color: #e8e4dc; font-weight: 500; }
     .result-body p { margin-bottom: 0.5rem; }
-
     .answers-bar { background: #0d0f14; border: 1px solid #2a2d38; border-radius: 10px; padding: 0.9rem 1rem; margin-bottom: 1.1rem; }
     .answers-bar-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
     .answers-bar-label { font-size: 0.63rem; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase; color: #4a4d5a; }
@@ -733,7 +847,6 @@ export default function App() {
     .answer-chip { display: flex; gap: 0.5rem; align-items: baseline; }
     .chip-label { font-size: 0.68rem; color: #4a4d5a; font-weight: 500; white-space: nowrap; flex-shrink: 0; min-width: 95px; }
     .chip-val { font-size: 0.74rem; color: #7a7d8a; font-weight: 300; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
     .feedback-section { border-top: 1px solid #1e2130; padding-top: 1.3rem; }
     .feedback-label { font-size: 0.66rem; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: #5a5d6a; margin-bottom: 0.65rem; }
     .feedback-row { display: flex; gap: 0.6rem; align-items: flex-end; }
@@ -746,17 +859,13 @@ export default function App() {
     .bottom-row { display: flex; justify-content: space-between; margin-top: 0.85rem; }
     .btn-text { font-family: 'DM Sans', sans-serif; font-size: 0.76rem; font-weight: 400; color: #3a3d4a; background: none; border: none; cursor: pointer; transition: color 0.2s; }
     .btn-text:hover { color: #6a6d7a; }
-
-    /* Loading */
     .loading-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem 0; gap: 1.4rem; }
     .loading-inline { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0; }
     .spinner { width: 18px; height: 18px; border: 2px solid #2a2d38; border-top-color: #c8a96e; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
     .spinner-lg { width: 32px; height: 32px; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .loading-text { font-size: 0.82rem; color: #5a5d6a; font-weight: 300; }
-    .error-msg { color: #e07070; font-size: 0.8rem; margin-top: 0.5rem; }
-
-    /* Modals / editor */
+    .error-msg { color: #e07070; font-size: 0.84rem; margin-top: 0.6rem; padding: 0.85rem 1rem; background: rgba(224,112,112,0.08); border-radius: 10px; border: 1px solid rgba(224,112,112,0.2); line-height: 1.5; }
     .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: flex; align-items: flex-start; justify-content: center; z-index: 200; padding: 2rem 1rem; overflow-y: auto; }
     .modal { background: #13161e; border: 1px solid #2a2d38; border-radius: 16px; padding: 2rem; width: 100%; max-width: 420px; position: relative; margin: auto; }
     .modal::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, #c8a96e, #e8c87a); border-radius: 16px 16px 0 0; }
@@ -786,8 +895,6 @@ export default function App() {
     .editor-opt:hover { border-color: #4a4d5a; color: #e8e4dc; }
     .editor-opt.selected { border-color: #c8a96e; color: #e8c87a; background: rgba(200,169,110,0.08); }
     .editor-footer { display: flex; justify-content: flex-end; gap: 0.65rem; padding: 1.1rem 1.6rem 1.4rem; border-top: 1px solid #1e2130; margin-top: 1.1rem; }
-
-    /* Saved */
     .saved-title { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 700; color: #f0ebe0; margin-bottom: 0.4rem; }
     .saved-sub { font-size: 0.82rem; color: #5a5d6a; font-weight: 300; margin-bottom: 1.6rem; }
     .saved-empty { text-align: center; padding: 2.5rem 0; color: #3a3d4a; font-size: 0.86rem; font-weight: 300; }
@@ -803,23 +910,16 @@ export default function App() {
     .btn-load:hover { background: rgba(200,169,110,0.16); }
     .btn-del { font-family: 'DM Sans', sans-serif; font-size: 0.74rem; color: #5a5d6a; background: none; border: 1px solid #2a2d38; border-radius: 7px; padding: 0.32rem 0.55rem; cursor: pointer; transition: all 0.15s; }
     .btn-del:hover { color: #e07070; border-color: #e0707044; }
-    .divider { height: 1px; background: #1e2130; margin: 1.5rem 0; }
   `;
 
   return (
     <>
       <style>{CSS}</style>
-
-      {showSaveModal && (
-        <SaveModal label={blueprintLabel} onSave={handleSave} onClose={() => setShowSaveModal(false)} />
-      )}
-      {showEditor && (
-        <AnswerEditor answers={answers} questions={questions} onSave={handleEditSave} onClose={() => setShowEditor(false)} />
-      )}
+      {showSaveModal && <SaveModal label={blueprintLabel} onSave={handleSave} onClose={() => setShowSaveModal(false)} />}
+      {showEditor && <AnswerEditor answers={answers} questions={questions} onSave={handleEditSave} onClose={() => setShowEditor(false)} />}
 
       <div className={`shell ${["results", "saved", "company_ctx", "questions"].includes(view) ? "top" : ""}`}>
         <div className="card">
-
           <div className="topbar">
             <div className="topbar-logo">ID Design Advisor</div>
             <div className="topbar-nav">
@@ -830,7 +930,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* ── HOME ── */}
           {view === "home" && (
             <>
               <h1 className="intro-headline">From intake<br />to blueprint.</h1>
@@ -848,7 +947,6 @@ export default function App() {
             </>
           )}
 
-          {/* ── FUNCTION SELECT ── */}
           {view === "fn_select" && (
             <>
               <div className="selector-title">Which function?</div>
@@ -867,7 +965,6 @@ export default function App() {
             </>
           )}
 
-          {/* ── ROLE SELECT ── */}
           {view === "role_select" && (
             <>
               <div className="selector-title">Which role?</div>
@@ -887,7 +984,6 @@ export default function App() {
             </>
           )}
 
-          {/* ── COMPANY CONTEXT ── */}
           {view === "company_ctx" && (
             <>
               <CompanyContextStep context={companyCtx} onChange={setCompanyCtx} />
@@ -901,7 +997,6 @@ export default function App() {
             </>
           )}
 
-          {/* ── QUESTIONS ── */}
           {view === "questions" && (
             <>
               <div className="progress-bar"><div className="progress-fill" style={{ width: `${progress}%` }} /></div>
@@ -910,17 +1005,20 @@ export default function App() {
               {currentQ.hint && <div className="question-hint">{currentQ.hint}</div>}
               {currentQ.type === "multi" && <div className="multi-hint">Select all that apply</div>}
               <QuestionCard question={currentQ} value={answers[currentQ.id]} onChange={val => setAnswers({ ...answers, [currentQ.id]: val })} />
-
               {step === totalSteps && (
                 <FileUpload
                   files={learnerFiles}
                   onAdd={f => setLearnerFiles(prev => [...prev, f])}
                   onRemove={i => setLearnerFiles(prev => prev.filter((_, idx) => idx !== i))}
+                  onUpdateContext={(i, val) => {
+                    const updated = [...learnerFiles];
+                    updated[i] = { ...updated[i], context: val };
+                    setLearnerFiles(updated);
+                  }}
                   title="Learner transcripts or application responses"
-                  subtitle="Upload interview notes, application answers, or intake forms for this specific hire. Claude will use them to personalize the blueprint."
+                  subtitle="Upload interview notes, application answers, or intake forms. Claude will use them to personalize the blueprint."
                 />
               )}
-
               <div className="btn-row">
                 <button className="btn-back" onClick={() => {
                   if (step === 1) setView(mode === "revenue" ? "company_ctx" : "home");
@@ -933,7 +1031,6 @@ export default function App() {
             </>
           )}
 
-          {/* ── RESULTS ── */}
           {view === "results" && (
             <>
               {loading && chatHistory.length <= 1 && (
@@ -946,7 +1043,6 @@ export default function App() {
                   </div>
                 </div>
               )}
-
               {chatHistory.length > 1 && (
                 <>
                   <div className="result-topbar">
@@ -959,17 +1055,13 @@ export default function App() {
                       <button className="btn-ghost" onClick={() => { if (latestBlueprint) exportToWord(latestBlueprint, blueprintLabel); }}>↓ Export Word Doc</button>
                     </div>
                   </div>
-
                   <AnswersSummary />
-
                   <div className="chat-area">
                     {chatHistory.map((msg, i) => <ChatBubble key={i} msg={msg} />)}
                     {loading && <div className="loading-inline"><div className="spinner" /><div className="loading-text">Revising blueprint…</div></div>}
                   </div>
-
                   <div ref={bottomRef} />
                   {error && <div className="error-msg">{error}</div>}
-
                   {!loading && (
                     <div className="feedback-section">
                       <div className="feedback-label">Clarify or push back on anything →</div>
@@ -994,7 +1086,6 @@ export default function App() {
             </>
           )}
 
-          {/* ── SAVED ── */}
           {view === "saved" && (
             <>
               <div className="saved-title">Saved Blueprints</div>

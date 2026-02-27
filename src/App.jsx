@@ -419,8 +419,8 @@ export default function App() {
     : (answers.context?.slice(0, 40) || "Blueprint");
 
   useEffect(() => {
-    (async () => {
-      try { const r = await window.storage.get(STORAGE_KEY); if (r) setSavedBlueprints(JSON.parse(r.value)); } catch {}
+    (() => {
+      try { const saved = localStorage.getItem(STORAGE_KEY); if (saved) setSavedBlueprints(JSON.parse(saved)); } catch {}
     })();
   }, []);
 
@@ -490,7 +490,7 @@ export default function App() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1200,
         system: sysPrompt || buildSystemPrompt(mode, selectedFn, selectedRole),
         messages: history.map(({ role, content }) => ({ role, content })),
@@ -546,7 +546,7 @@ export default function App() {
     };
     const updated = [bp, ...savedBlueprints];
     setSavedBlueprints(updated);
-    try { await window.storage.set(STORAGE_KEY, JSON.stringify(updated)); onSuccess?.(); } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updated)); onSuccess?.(); } catch {}
   };
 
   const loadBlueprint = (bp) => {
@@ -558,7 +558,7 @@ export default function App() {
   const deleteBlueprint = async (id) => {
     const updated = savedBlueprints.filter(b => b.id !== id);
     setSavedBlueprints(updated);
-    try { await window.storage.set(STORAGE_KEY, JSON.stringify(updated)); } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updated)); } catch {}
   };
 
   const reset = () => {

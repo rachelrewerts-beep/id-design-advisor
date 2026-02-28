@@ -146,6 +146,8 @@ Based on the role, function, and any stakeholders provided, suggest a structured
 - Week 2: Broader stakeholder meetings (adjacent teams, key internal resources, leadership where appropriate)
 If specific names/titles were provided by the user, use them. Otherwise suggest role-based recommendations appropriate to the function and seniority level.
 
+ACCOUNT HANDOFF SECTION: If the intake includes account handoff or executive introduction data, include a dedicated "## Account Handoff" section in the blueprint. Acknowledge the volume, calculate a transfer pace, and describe the approach (review → shadow → introduce → own). For Directors, frame as executive relationship building.
+
 If learner transcripts or application responses are uploaded, extract insights about this specific hire and personalize the blueprint to their background, gaps, and communication style. Call out 1-2 specific insights from the transcript that shaped your recommendations.
 
 Think like a consultant who has built onboarding programs at B2B SaaS companies. Be concrete. Name specific activities, not categories. Keep the blueprint under 700 words — focused and actionable.`;
@@ -154,13 +156,23 @@ Think like a consultant who has built onboarding programs at B2B SaaS companies.
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // ── Plan system prompt ───────────────────────────────────────────────────────
 
-function buildPlanSystemPrompt(mode, functionId, roleId, blueprintText) {
+function buildPlanSystemPrompt(mode, functionId, roleId, blueprintText, answers = {}) {
   const fnLabel = FUNCTIONS.find(f => f.id === functionId)?.label || functionId;
   const roleLabel = ROLES.find(r => r.id === roleId)?.label || roleId;
+
+  // Build explicit account handoff context
+  let accountHandoffContext = "";
+  if (answers.accountHandoff && !answers.accountHandoff.startsWith("None")) {
+    const isDirector = roleId === "director";
+    accountHandoffContext = isDirector
+      ? `\n\nEXECUTIVE ACCOUNT INTRODUCTIONS: ${answers.accountHandoff} strategic accounts. Target completion: ${answers.accountHandoffWeek || "to be determined"}. Frame as executive relationship building, not operational handoff.`
+      : `\n\nACCOUNT HANDOFF: ${answers.accountHandoff} accounts to transfer. Target full transfer: ${answers.accountHandoffWeek || "to be determined"}. Calculate weekly intro rate and build into the plan.`;
+  }
+
   return `You are an expert Instructional Designer building a week-by-week onboarding program plan.
 
 Here is the strategic blueprint you are executing against:
-${blueprintText}
+${blueprintText}${accountHandoffContext}
 
 Generate a complete week-by-week program plan covering every week of the onboarding timeline.
 
@@ -188,7 +200,12 @@ RULES:
 - Never use markdown tables
 - On follow-up feedback, output the complete revised plan — all weeks, same structure
 
-ACCOUNT HANDOFF: If the blueprint mentions account handoff (number of accounts and target transfer week), calculate a realistic weekly transfer rate and weave account handoff activities naturally into the program plan. Include: account review/shadowing in early weeks, first introductions in mid weeks, and full ownership by the target week. For Directors, frame as executive introductions rather than operational handoff.`;
+ACCOUNT HANDOFF: If the intake includes account handoff data, it will appear under "ACCOUNT HANDOFF" or "EXECUTIVE ACCOUNT INTRODUCTIONS" in the blueprint context. You MUST integrate this into the program plan as follows:
+- Weeks 1-2: Account portfolio review — new hire studies existing accounts, health scores, history
+- Weeks 2-4: Shadow existing CSM or manager on customer calls for accounts being transferred
+- Mid-program: Begin formal introductions to customers (at a pace that respects the total count and target week)
+- By target week: All accounts fully transferred and new hire is primary point of contact
+Calculate the weekly introduction rate by dividing total accounts by available weeks. Name specific activities, not just "account handoff."`;
 }
 
 
@@ -708,6 +725,21 @@ export default function App() {
       if (compCtx.other) ctxParts.push(`Additional context: ${compCtx.other}`);
       if (ctxParts.length > 0) text += `\n\n---\nCOMPANY CONTEXT:\n${ctxParts.join("\n")}`;
 
+      // Explicitly surface account handoff as its own section
+      if (ans.accountHandoff && !ans.accountHandoff.startsWith("None")) {
+        const handoffLabel = selectedRole === "director" ? "EXECUTIVE ACCOUNT INTRODUCTIONS" : "ACCOUNT HANDOFF";
+        const weekLabel = selectedRole === "director" ? "Target completion week" : "Target full transfer week";
+        let handoffText = `\n\n---\n${handoffLabel}:\n`;
+        handoffText += selectedRole === "director"
+          ? `Strategic accounts to introduce: ${ans.accountHandoff}\n`
+          : `Accounts to transfer: ${ans.accountHandoff}\n`;
+        if (ans.accountHandoffWeek) handoffText += `${weekLabel}: ${ans.accountHandoffWeek}\n`;
+        handoffText += selectedRole === "director"
+          ? `This leader needs executive-level introductions to these strategic accounts by the target week. Build this into the program plan as relationship-building activities, not operational handoff.`
+          : `Calculate a realistic weekly transfer rate and build account handoff activities into the program plan: account review and shadowing in early weeks, first customer introductions in mid weeks, and full ownership by the target week.`;
+        text += handoffText;
+      }
+
       if (compCtx.files?.length > 0) {
         compCtx.files.filter(f => f.contentType === "text").forEach((f, i) => {
           const truncated = f.content.length > 5000 ? f.content.slice(0, 5000) + "\n[truncated]" : f.content;
@@ -775,7 +807,7 @@ export default function App() {
     if (!latestBlueprint) return;
     setPlanLoading(true); setPlanError(""); setShowPlan(false);
     const blueprintForPrompt = latestBlueprint.length > 2000 ? latestBlueprint.slice(0, 2000) + "\n[truncated]" : latestBlueprint;
-    const sysPrompt = buildPlanSystemPrompt(mode, selectedFn, selectedRole, blueprintForPrompt);
+    const sysPrompt = buildPlanSystemPrompt(mode, selectedFn, selectedRole, blueprintForPrompt, answers);
     const userMsg = { role: "user", content: "Generate the full week-by-week program plan based on this blueprint.", isChat: false };
     const newHistory = [userMsg];
     setPlanHistory(newHistory);
@@ -836,7 +868,7 @@ export default function App() {
           body: JSON.stringify({
             model: "claude-sonnet-4-6",
             max_tokens: 3500,
-            system: buildPlanSystemPrompt(mode, selectedFn, selectedRole, blueprintForPrompt),
+            system: buildPlanSystemPrompt(mode, selectedFn, selectedRole, blueprintForPrompt, answers),
             messages: newHistory.map(({ role, content }) => ({ role, content })),
           }),
         });

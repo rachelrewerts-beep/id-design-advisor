@@ -88,9 +88,7 @@ const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 function buildSystemPrompt(mode, functionId, roleId) {
   const base = `You are an expert Instructional Designer with deep knowledge of ADDIE, SAM, Dick & Carey, Kemp Design Model, and Backwards Design.
 
-On the first message, produce TWO separate outputs divided by the exact separator "---PROGRAM_PLAN---".
-
-PART 1 — The strategic blueprint (before the separator):
+On the first message, produce a strategic blueprint with these sections:
 
 ## Recommended Design Model
 ## Learning Objectives
@@ -99,27 +97,16 @@ PART 1 — The strategic blueprint (before the separator):
 ## Early Risks to Validate
 ## Evaluation Approach
 
-PART 2 — The week-by-week program plan (after the separator):
-Structure EVERY week like this, with no exceptions:
-
-## Week N — [Title]
-### Product
-- activity (or "No product activities this week" if tapering off)
-### Program
-- activity
-- Owner: person
-- Format: format type
-- Timing: specific day or days
-
-Product activities should taper off naturally — heavy in early weeks, lighter in middle weeks, gone by the final weeks. Program activities run throughout.
-
 IMPORTANT FORMATTING RULES:
 - Never use markdown tables (no | pipes |)
 - Use bullet points only
-- Keep each week focused — 3 to 5 activities max per week
-- Be specific: name the activity, owner, format, and timing
+- For activities with owner/format/timing, use nested bullets:
+  - Activity name
+  - Owner: person
+  - Format: format type
+  - Timing: timing
 
-On follow-up messages, respond conversationally first, then output BOTH parts again with the separator between them. Keep the same structure.`;
+On follow-up messages, respond conversationally first acknowledging what changed and why, then output the full revised blueprint with the same sections.`;
 
   if (mode === "general") {
     return base + `
@@ -151,10 +138,47 @@ If specific names/titles were provided by the user, use them. Otherwise suggest 
 
 If learner transcripts or application responses are uploaded, extract insights about this specific hire and personalize the blueprint to their background, gaps, and communication style. Call out 1-2 specific insights from the transcript that shaped your recommendations.
 
-Think like a consultant who has built onboarding programs at B2B SaaS companies. Be concrete. Name specific activities, not categories. Keep Part 1 under 600 words. Part 2 can be as long as needed to cover all weeks.`;
+Think like a consultant who has built onboarding programs at B2B SaaS companies. Be concrete. Name specific activities, not categories. Keep the blueprint under 700 words — focused and actionable.`;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Plan system prompt ───────────────────────────────────────────────────────
+
+function buildPlanSystemPrompt(mode, functionId, roleId, blueprintText) {
+  const fnLabel = FUNCTIONS.find(f => f.id === functionId)?.label || functionId;
+  const roleLabel = ROLES.find(r => r.id === roleId)?.label || roleId;
+  return `You are an expert Instructional Designer building a week-by-week onboarding program plan.
+
+Here is the strategic blueprint you are executing against:
+${blueprintText}
+
+Generate a complete week-by-week program plan covering every week of the onboarding timeline.
+
+Structure EVERY week exactly like this:
+
+## Week N — [Descriptive Title]
+### Product
+- Activity name
+- Owner: person
+- Format: format
+- Timing: specific day or days
+### Program
+- Activity name
+- Owner: person
+- Format: format
+- Timing: specific day or days
+
+RULES:
+- Cover ALL weeks — do not stop early
+- Product activities taper off naturally: heavy weeks 1-3, lighter weeks 4-6, gone by week 7+. Write "No product activities this week" under ### Product if none.
+- Program activities run every week throughout
+- 2-4 activities per section per week maximum — quality over quantity
+- Be specific: use real names, tools, and formats from the blueprint context
+- Never use markdown tables
+- On follow-up feedback, output the complete revised plan — all weeks, same structure`;
+}
+
+
 
 function getRevenueQuestions(roleId) {
   const productQs = roleId === "director" ? PRODUCT_RAMP_QUESTIONS_DIRECTOR : PRODUCT_RAMP_QUESTIONS_IC;
@@ -615,6 +639,9 @@ export default function App() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
+  const [planHistory, setPlanHistory] = useState([]);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState("");
   const bottomRef = useRef(null);
 
   const questions = mode === "revenue" ? getRevenueQuestions(selectedRole) : GENERAL_QUESTIONS;
@@ -622,9 +649,9 @@ export default function App() {
   const currentQ = questions[step - 1];
   const progress = Math.round((step / totalSteps) * 100);
   const revisionCount = chatHistory.filter(m => m.role === "assistant").length;
-  const latestRaw = [...chatHistory].filter(m => m.role === "assistant").pop()?.content || null;
-  const { blueprint: latestBlueprint, programPlan: latestProgramPlan } = latestRaw ? splitBlueprintAndPlan(latestRaw) : { blueprint: null, programPlan: null };
-  const programWeeks = parseProgramWeeks(latestProgramPlan);
+  const latestBlueprint = [...chatHistory].filter(m => m.role === "assistant").pop()?.content || null;
+  const latestPlanRaw = [...planHistory].filter(m => m.role === "assistant").pop()?.content || null;
+  const programWeeks = parseProgramWeeks(latestPlanRaw);
 
   const blueprintLabel = mode === "revenue"
     ? `${FUNCTIONS.find(f => f.id === selectedFn)?.label} ${ROLES.find(r => r.id === selectedRole)?.label} Onboarding`
@@ -697,7 +724,7 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 4000,
+        max_tokens: 5000,
         system: sysPrompt || buildSystemPrompt(mode, selectedFn, selectedRole),
         messages: history.map(({ role, content }) => ({ role, content })),
       }),
@@ -723,29 +750,90 @@ export default function App() {
     setLoading(false);
   };
 
+  const runPlanGeneration = async () => {
+    if (!latestBlueprint) return;
+    setPlanLoading(true); setPlanError(""); setShowPlan(false);
+    const sysPrompt = buildPlanSystemPrompt(mode, selectedFn, selectedRole, latestBlueprint);
+    const userMsg = { role: "user", content: "Generate the full week-by-week program plan based on this blueprint.", isChat: false };
+    const newHistory = [userMsg];
+    setPlanHistory(newHistory);
+    try {
+      const res = await fetch("/api/claude", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 6000,
+          system: sysPrompt,
+          messages: newHistory.map(({ role, content }) => ({ role, content })),
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = data.content?.map(b => b.text || "").join("") || "";
+      setPlanHistory([...newHistory, { role: "assistant", content: text }]);
+      setShowPlan(true);
+    } catch (e) {
+      setPlanError("Unfortunately, the program plan did not generate. Please try again.");
+      console.error("Plan generation error:", e.message);
+    }
+    setPlanLoading(false);
+  };
+
   const handleNextQuestion = () => {
     if (step < totalSteps) setStep(step + 1);
     else { setView("results"); runAnalysis(answers, companyCtx, learnerFiles); }
   };
 
   const handleEditSave = (newAnswers) => {
-    setAnswers(newAnswers); setShowEditor(false); setChatHistory([]); setShowPlan(false);
+    setAnswers(newAnswers); setShowEditor(false); setChatHistory([]); setShowPlan(false); setPlanHistory([]); setPlanError("");
     setView("results"); runAnalysis(newAnswers, companyCtx, learnerFiles);
   };
 
   const sendFeedback = async () => {
-    if (!feedbackInput.trim() || loading) return;
-    setLoading(true); setError("");
-    const userMsg = { role: "user", content: feedbackInput.trim(), isChat: true };
-    const newHistory = [...chatHistory, userMsg];
-    setChatHistory(newHistory); setFeedbackInput("");
-    try {
-      const text = await callAPI(newHistory);
-      setChatHistory([...newHistory, { role: "assistant", content: text }]);
-    } catch (e) {
-      setError("Unfortunately, your blueprint did not generate. Please try again.");
+    if (!feedbackInput.trim() || loading || planLoading) return;
+    const isPlanFeedback = planHistory.length > 1;
+    if (isPlanFeedback) {
+      // Route to plan
+      setPlanLoading(true); setPlanError("");
+      const userMsg = { role: "user", content: feedbackInput.trim(), isChat: true };
+      const newHistory = [...planHistory, userMsg];
+      setPlanHistory(newHistory); setFeedbackInput("");
+      try {
+        const res = await fetch("/api/claude", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            max_tokens: 6000,
+            system: buildPlanSystemPrompt(mode, selectedFn, selectedRole, latestBlueprint),
+            messages: newHistory.map(({ role, content }) => ({ role, content })),
+          }),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message);
+        const text = data.content?.map(b => b.text || "").join("") || "";
+        setPlanHistory([...newHistory, { role: "assistant", content: text }]);
+      } catch (e) {
+        setPlanError("Unfortunately, the program plan did not update. Please try again.");
+      }
+      setPlanLoading(false);
+    } else {
+      // Route to blueprint
+      setLoading(true); setError("");
+      const userMsg = { role: "user", content: feedbackInput.trim(), isChat: true };
+      const newHistory = [...chatHistory, userMsg];
+      setChatHistory(newHistory); setFeedbackInput("");
+      // Clear plan when blueprint changes
+      setPlanHistory([]); setShowPlan(false);
+      try {
+        const text = await callAPI(newHistory);
+        setChatHistory([...newHistory, { role: "assistant", content: text }]);
+      } catch (e) {
+        setError("Unfortunately, your blueprint did not update. Please try again.");
+      }
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleSave = async (name, onSuccess) => {
@@ -776,7 +864,7 @@ export default function App() {
   const reset = () => {
     setView("home"); setMode(null); setSelectedFn(null); setSelectedRole(null);
     setCompanyCtx({}); setStep(1); setAnswers({}); setLearnerFiles([]);
-    setChatHistory([]); setFeedbackInput(""); setError(""); setShowPlan(false);
+    setChatHistory([]); setFeedbackInput(""); setError(""); setShowPlan(false); setPlanHistory([]); setPlanError("");
   };
 
   const AnswersSummary = () => (
@@ -1021,6 +1109,9 @@ export default function App() {
     .plan-sub { font-size: 0.78rem; font-weight: 300; color: #6a6d7a; line-height: 1.4; padding-left: 1.6rem; position: relative; }
     .plan-sub::before { content: '·'; position: absolute; left: 0.85rem; color: #3a3d4a; }
     .plan-export-row { display: flex; justify-content: flex-end; padding-top: 1rem; margin-top: 0.5rem; border-top: 1px solid #1e2130; }
+    .plan-cta { background: linear-gradient(135deg, rgba(200,169,110,0.06), rgba(200,169,110,0.02)); border: 1px solid #c8a96e44; border-radius: 14px; padding: 1.4rem 1.5rem; margin-top: 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap; }
+    .plan-cta-title { font-family: 'Playfair Display', serif; font-size: 1rem; font-weight: 700; color: #f0ebe0; margin-bottom: 0.3rem; }
+    .plan-cta-sub { font-size: 0.78rem; color: #7a7d8a; font-weight: 300; line-height: 1.5; }
     .plan-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
     .btn-reveal { font-family: 'DM Sans', sans-serif; font-size: 0.82rem; font-weight: 500; color: #c8a96e; background: rgba(200,169,110,0.08); border: 1px solid #c8a96e55; border-radius: 10px; padding: 0.6rem 1.2rem; cursor: pointer; transition: all 0.15s; white-space: nowrap; flex-shrink: 0; }
     .btn-reveal:hover { background: rgba(200,169,110,0.16); }
@@ -1177,7 +1268,7 @@ export default function App() {
                     </div>
                     <div className="export-bar">
                       <button className="btn-ghost gold" onClick={() => setShowSaveModal(true)}>⬇ Save</button>
-                      <button className="btn-ghost" onClick={() => { if (latestRaw) exportToWord(latestBlueprint, latestProgramPlan, programWeeks, blueprintLabel); }}>↓ Export Word Doc</button>
+                      <button className="btn-ghost" onClick={() => { if (latestBlueprint) exportToWord(latestBlueprint, latestPlanRaw, programWeeks, blueprintLabel); }}>↓ Export Word Doc</button>
                     </div>
                   </div>
                   <AnswersSummary />
@@ -1199,8 +1290,37 @@ export default function App() {
                     {loading && <div className="loading-inline"><div className="spinner" /><div className="loading-text">Revising blueprint…</div></div>}
                   </div>
 
+                  {/* Generate Plan Button */}
+                  {latestBlueprint && !loading && planHistory.length === 0 && (
+                    <div className="plan-cta">
+                      <div className="plan-cta-text">
+                        <div className="plan-cta-title">Ready to build the week-by-week plan?</div>
+                        <div className="plan-cta-sub">Review the blueprint above, make any changes, then generate the full program plan.</div>
+                      </div>
+                      <button className="btn-primary" onClick={runPlanGeneration}>Generate Program Plan →</button>
+                    </div>
+                  )}
+
+                  {/* Plan Loading */}
+                  {planLoading && (
+                    <div className="loading-state">
+                      <div className="spinner spinner-lg" />
+                      <div className="loading-text">Building your week-by-week program plan…</div>
+                    </div>
+                  )}
+
+                  {/* Plan Error */}
+                  {!planLoading && planError && (
+                    <div className="error-state">
+                      <div className="error-msg">{planError}</div>
+                      <div className="btn-row" style={{ marginTop: "1rem" }}>
+                        <button className="btn-primary" onClick={runPlanGeneration}>Try again →</button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Program Plan */}
-                  {programWeeks.length > 0 && !loading && (
+                  {programWeeks.length > 0 && !planLoading && (
                     <div className="program-plan">
                       <div className="plan-header">
                         <div className="plan-title-row">
@@ -1208,19 +1328,9 @@ export default function App() {
                             <div className="plan-title">Program Plan</div>
                             <div className="plan-subtitle">{programWeeks.length} weeks · scroll to review, then export for your manager and new hire</div>
                           </div>
-                          {!showPlan && (
-                            <button className="btn-reveal" onClick={() => setShowPlan(true)}>View Program Plan ↓</button>
-                          )}
+                          <button className="btn-ghost" onClick={() => { if (latestBlueprint) exportToWord(latestBlueprint, latestPlanRaw, programWeeks, blueprintLabel); }}>↓ Export Word Doc</button>
                         </div>
                       </div>
-                      {!showPlan && (
-                        <div className="plan-preview">
-                          {programWeeks.map(w => (
-                            <div key={w.number} className="plan-preview-pill">Week {w.number}{w.title ? ` — ${w.title}` : ""}</div>
-                          ))}
-                        </div>
-                      )}
-                      {showPlan && (
                       {programWeeks.map(week => (
                         <div key={week.number} className="plan-week">
                           <div className="plan-week-header">
@@ -1254,9 +1364,8 @@ export default function App() {
                         </div>
                       ))}
                       <div className="plan-export-row">
-                        <button className="btn-primary" onClick={() => { if (latestRaw) exportToWord(latestBlueprint, latestProgramPlan, programWeeks, blueprintLabel); }}>↓ Export Word Doc</button>
+                        <button className="btn-primary" onClick={() => { if (latestBlueprint) exportToWord(latestBlueprint, latestPlanRaw, programWeeks, blueprintLabel); }}>↓ Export Word Doc</button>
                       </div>
-                      )}
                     </div>
                   )}
 
@@ -1264,12 +1373,14 @@ export default function App() {
                   {error && <div className="error-msg">{error}</div>}
                   {!loading && (
                     <div className="feedback-section">
-                      <div className="feedback-label">Clarify or push back on anything →</div>
+                      <div className="feedback-label">{planHistory.length > 1 ? "Refine the program plan →" : "Clarify or push back on the blueprint →"}</div>
                       <div className="feedback-row">
                         <textarea className="feedback-input"
-                          placeholder={mode === "revenue"
-                            ? `e.g. "They use Challenger not MEDDIC" or "This hire has 3 years of CS experience"`
-                            : `e.g. "The timeline is actually 4 weeks" or "She has prior experience I didn't mention"`}
+                          placeholder={planHistory.length > 1
+                            ? `e.g. "Add a mock EBR prep session in week 5" or "Week 8 needs more manager coaching"`
+                            : mode === "revenue"
+                              ? `e.g. "They use Challenger not MEDDIC" or "This hire has 3 years of CS experience"`
+                              : `e.g. "The timeline is actually 4 weeks" or "She has prior experience I didn't mention"`}
                           value={feedbackInput} onChange={e => setFeedbackInput(e.target.value)}
                           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendFeedback(); } }}
                           rows={2}

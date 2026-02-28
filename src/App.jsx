@@ -79,6 +79,16 @@ const PRODUCT_RAMP_QUESTIONS_DIRECTOR = [
   { id: "productRampNeeded", label: "How much product orientation does this leader need?", type: "single", options: ["Deep — they'll be hands-on with the product regularly", "Moderate — they need enough to coach their team and talk to customers", "Light — high-level awareness is sufficient for this role"] },
 ];
 
+const ACCOUNT_HANDOFF_QUESTIONS_IC = [
+  { id: "accountHandoff", label: "How many accounts will this hire be taking over?", hint: "Select the closest range — or choose none if they're starting fresh with new accounts", type: "single", options: ["None — starting fresh with new accounts", "Under 10", "11–20", "21–30", "31–50", "50+"] },
+  { id: "accountHandoffWeek", label: "By what week should all accounts be fully transferred?", hint: "e.g. 'Week 6' or 'end of month 2' — the AI will calculate a realistic transfer pace", type: "textarea", conditionalOn: { id: "accountHandoff", not: "None — starting fresh with new accounts" } },
+];
+
+const ACCOUNT_HANDOFF_QUESTIONS_DIRECTOR = [
+  { id: "accountHandoff", label: "How many strategic accounts will this leader need to be introduced to?", hint: "Executive-level introductions to key accounts — not full ownership", type: "single", options: ["None — not applicable for this role", "3–5 accounts (light touch)", "6–10 accounts", "10+ accounts"] },
+  { id: "accountHandoffWeek", label: "By what week should all executive introductions be complete?", hint: "e.g. 'Week 4' or 'end of first month'", type: "textarea", conditionalOn: { id: "accountHandoff", not: "None — not applicable for this role" } },
+];
+
 const STORAGE_KEY = "id_advisor_blueprints";
 const MAX_FILE_SIZE_MB = 2;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
@@ -176,14 +186,24 @@ RULES:
 - Owner/Format/Timing as sub-bullets under each activity
 - Use real names and tools from the blueprint
 - Never use markdown tables
-- On follow-up feedback, output the complete revised plan — all weeks, same structure`;
+- On follow-up feedback, output the complete revised plan — all weeks, same structure
+
+ACCOUNT HANDOFF: If the blueprint mentions account handoff (number of accounts and target transfer week), calculate a realistic weekly transfer rate and weave account handoff activities naturally into the program plan. Include: account review/shadowing in early weeks, first introductions in mid weeks, and full ownership by the target week. For Directors, frame as executive introductions rather than operational handoff.`;
 }
 
 
 
-function getRevenueQuestions(roleId) {
+function getRevenueQuestions(roleId, answers = {}) {
   const productQs = roleId === "director" ? PRODUCT_RAMP_QUESTIONS_DIRECTOR : PRODUCT_RAMP_QUESTIONS_IC;
-  return [...REVENUE_QUESTIONS_BASE, ...productQs];
+  const accountQs = roleId === "director" ? ACCOUNT_HANDOFF_QUESTIONS_DIRECTOR : ACCOUNT_HANDOFF_QUESTIONS_IC;
+  const all = [...REVENUE_QUESTIONS_BASE, ...productQs, ...accountQs];
+  // Filter out conditional questions where the condition isn't met
+  return all.filter(q => {
+    if (!q.conditionalOn) return true;
+    const val = answers[q.conditionalOn.id];
+    if (q.conditionalOn.not) return val && val !== q.conditionalOn.not;
+    return false;
+  });
 }
 
 function formatAnswers(answers, questions) {
@@ -645,7 +665,7 @@ export default function App() {
   const [planError, setPlanError] = useState("");
   const bottomRef = useRef(null);
 
-  const questions = mode === "revenue" ? getRevenueQuestions(selectedRole) : GENERAL_QUESTIONS;
+  const questions = mode === "revenue" ? getRevenueQuestions(selectedRole, answers) : GENERAL_QUESTIONS;
   const totalSteps = questions.length;
   const currentQ = questions[step - 1];
   const progress = Math.round((step / totalSteps) * 100);

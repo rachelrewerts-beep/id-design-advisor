@@ -170,10 +170,11 @@ Structure EVERY week exactly like this:
 
 RULES:
 - Cover ALL weeks — do not stop early
-- Product activities taper off naturally: heavy weeks 1-3, lighter weeks 4-6, gone by week 7+. Write "No product activities this week" under ### Product if none.
-- Program activities run every week throughout
-- 2-4 activities per section per week maximum — quality over quantity
-- Be specific: use real names, tools, and formats from the blueprint context
+- Product activities taper off: heavy weeks 1-3, lighter weeks 4-5, gone week 6+. Omit ### Product section entirely for weeks with no product activities.
+- Program activities run every week
+- MAXIMUM 3 activities per section per week — be concise, one line per activity name
+- Owner/Format/Timing as sub-bullets under each activity
+- Use real names and tools from the blueprint
 - Never use markdown tables
 - On follow-up feedback, output the complete revised plan — all weeks, same structure`;
 }
@@ -753,7 +754,8 @@ export default function App() {
   const runPlanGeneration = async () => {
     if (!latestBlueprint) return;
     setPlanLoading(true); setPlanError(""); setShowPlan(false);
-    const sysPrompt = buildPlanSystemPrompt(mode, selectedFn, selectedRole, latestBlueprint);
+    const blueprintForPrompt = latestBlueprint.length > 2000 ? latestBlueprint.slice(0, 2000) + "\n[truncated]" : latestBlueprint;
+    const sysPrompt = buildPlanSystemPrompt(mode, selectedFn, selectedRole, blueprintForPrompt);
     const userMsg = { role: "user", content: "Generate the full week-by-week program plan based on this blueprint.", isChat: false };
     const newHistory = [userMsg];
     setPlanHistory(newHistory);
@@ -763,18 +765,25 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
-          max_tokens: 6000,
+          max_tokens: 3500,
           system: sysPrompt,
           messages: newHistory.map(({ role, content }) => ({ role, content })),
         }),
       });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Server error ${res.status}: ${errText.slice(0, 100)}`);
+      }
       const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
       const text = data.content?.map(b => b.text || "").join("") || "";
       setPlanHistory([...newHistory, { role: "assistant", content: text }]);
       setShowPlan(true);
     } catch (e) {
-      setPlanError("Unfortunately, the program plan did not generate. Please try again.");
+      const msg = e.message?.includes("504") || e.message?.includes("timeout")
+        ? "The program plan timed out — this can happen with longer timelines. Please try again."
+        : "Unfortunately, the program plan did not generate. Please try again.";
+      setPlanError(msg);
       console.error("Plan generation error:", e.message);
     }
     setPlanLoading(false);
@@ -800,22 +809,28 @@ export default function App() {
       const newHistory = [...planHistory, userMsg];
       setPlanHistory(newHistory); setFeedbackInput("");
       try {
+        const blueprintForPrompt = latestBlueprint.length > 2000 ? latestBlueprint.slice(0, 2000) + "\n[truncated]" : latestBlueprint;
         const res = await fetch("/api/claude", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model: "claude-sonnet-4-6",
-            max_tokens: 6000,
-            system: buildPlanSystemPrompt(mode, selectedFn, selectedRole, latestBlueprint),
+            max_tokens: 3500,
+            system: buildPlanSystemPrompt(mode, selectedFn, selectedRole, blueprintForPrompt),
             messages: newHistory.map(({ role, content }) => ({ role, content })),
           }),
         });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Server error ${res.status}: ${errText.slice(0, 100)}`);
+        }
         const data = await res.json();
-        if (data.error) throw new Error(data.error.message);
+        if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
         const text = data.content?.map(b => b.text || "").join("") || "";
         setPlanHistory([...newHistory, { role: "assistant", content: text }]);
       } catch (e) {
         setPlanError("Unfortunately, the program plan did not update. Please try again.");
+        console.error("Plan feedback error:", e.message);
       }
       setPlanLoading(false);
     } else {

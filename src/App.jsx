@@ -15,15 +15,6 @@ const ROLES = [
   { id: "director", label: "Director", sub: "Org leader, strategic scope" },
 ];
 
-const METHODOLOGIES = [
-  "MEDDIC",
-  "Challenger",
-  "SPIN",
-  "Command of the Message",
-  "Business Review Framework",
-  "Other",
-];
-
 const ROLE_FUNCTION_CONTEXT = {
   cs: {
     csm: "CSM onboarding: ramp to autonomous customer calls, QBR ownership, renewal conversations, product fluency, and strategic account management.",
@@ -133,7 +124,7 @@ Be specific and practical. If transcript or application content is uploaded, ext
 
 You are designing a ${fnLabel} onboarding program for a ${roleLabel}. Context: ${roleContext}
 
-COMPANY CONTEXT: If the user has provided methodology, ICP, stakeholders, or company documents, use them to make every section company-specific. Reference actual methodology names, ICP characteristics, product use cases, and internal terminology. The program outline should reflect their real stack and process.
+COMPANY CONTEXT: If the user has provided methodology, ICP, stakeholders, tools, or company documents, use them to make every section company-specific. Reference actual methodology names, ICP characteristics, product use cases, tool names, and internal terminology. If tools are listed, include specific tool training activities in the Product Ramp section — name the tool and its purpose. The program outline should reflect their real stack and process.
 
 PRODUCT RAMP SECTION: 
 ${isDirector
@@ -461,20 +452,6 @@ function FileUpload({ files, onAdd, onRemove, onUpdateContext, title, subtitle, 
 // ── Company Context Step ──────────────────────────────────────────────────────
 
 function CompanyContextStep({ context, onChange }) {
-  const [showOtherMethodology, setShowOtherMethodology] = useState(
-    context.methodology && !METHODOLOGIES.slice(0, -1).includes(context.methodology) ? true : false
-  );
-
-  const handleMethodologySelect = (val) => {
-    if (val === "Other") {
-      setShowOtherMethodology(true);
-      onChange({ ...context, methodology: "", methodologySelected: "Other" });
-    } else {
-      setShowOtherMethodology(false);
-      onChange({ ...context, methodology: val, methodologySelected: val });
-    }
-  };
-
   return (
     <div className="company-context">
       <div className="cc-header">
@@ -485,21 +462,12 @@ function CompanyContextStep({ context, onChange }) {
 
       <div className="cc-field">
         <label className="cc-label">Sales or CS methodology</label>
-        <div className="cc-hint">Select the primary methodology this team uses</div>
-        <div className="methodology-grid">
-          {METHODOLOGIES.map(m => (
-            <button key={m}
-              className={`method-btn ${(context.methodologySelected || context.methodology) === m ? "selected" : ""}`}
-              onClick={() => handleMethodologySelect(m)}>{m}</button>
-          ))}
-        </div>
-        {showOtherMethodology && (
-          <input className="cc-input-single" style={{ marginTop: "0.6rem" }}
-            placeholder="Describe your methodology..."
-            value={context.methodology || ""}
-            onChange={e => onChange({ ...context, methodology: e.target.value, methodologySelected: "Other" })}
-          />
-        )}
+        <div className="cc-hint">How does this team sell or manage customers? Name the framework if there is one, or describe the approach</div>
+        <textarea className="cc-input" rows={2}
+          placeholder="e.g. MEDDIC for discovery, Challenger for positioning, value-based selling focused on ROI storytelling, or no formal methodology — consultative and relationship-driven..."
+          value={context.methodology || ""}
+          onChange={e => onChange({ ...context, methodology: e.target.value })}
+        />
       </div>
 
       <div className="cc-field">
@@ -533,10 +501,20 @@ function CompanyContextStep({ context, onChange }) {
       </div>
 
       <div className="cc-field">
+        <label className="cc-label">Tools this hire needs to be trained on</label>
+        <div className="cc-hint">List each tool and its primary purpose — the program plan will include specific tool training activities</div>
+        <textarea className="cc-input" rows={3}
+          placeholder={"e.g.\nSalesforce — renewals, contracts, and account records\nGainsight — customer health scoring and playbooks\nGong — call recording and coaching\nNotion — internal documentation and playbooks\nSlack — team communication and escalation channels"}
+          value={context.tools || ""}
+          onChange={e => onChange({ ...context, tools: e.target.value })}
+        />
+      </div>
+
+      <div className="cc-field">
         <label className="cc-label">Anything else we should know</label>
-        <div className="cc-hint">Stack, internal terminology, known gaps in current onboarding, cultural context</div>
+        <div className="cc-hint">Internal terminology, known gaps in current onboarding, cultural context</div>
         <textarea className="cc-input" rows={2}
-          placeholder="e.g. Team uses Salesforce + Gong + Notion. Current onboarding is mostly Notion docs with no structured call coaching..."
+          placeholder="e.g. Current onboarding is mostly Notion docs with no structured call coaching. Team is in active ICP pivot from SMB to enterprise..."
           value={context.other || ""}
           onChange={e => onChange({ ...context, other: e.target.value })}
         />
@@ -722,6 +700,7 @@ export default function App() {
       if (compCtx.icp) ctxParts.push(`ICP: ${compCtx.icp}`);
       if (compCtx.product) ctxParts.push(`Product: ${compCtx.product}`);
       if (compCtx.stakeholders) ctxParts.push(`Key people to meet:\n${compCtx.stakeholders}`);
+      if (compCtx.tools) ctxParts.push(`Tools to train on:\n${compCtx.tools}`);
       if (compCtx.other) ctxParts.push(`Additional context: ${compCtx.other}`);
       if (ctxParts.length > 0) text += `\n\n---\nCOMPANY CONTEXT:\n${ctxParts.join("\n")}`;
 
@@ -742,7 +721,7 @@ export default function App() {
 
       if (compCtx.files?.length > 0) {
         compCtx.files.filter(f => f.contentType === "text").forEach((f, i) => {
-          const truncated = f.content.length > 5000 ? f.content.slice(0, 5000) + "\n[truncated]" : f.content;
+          const truncated = f.content.length > 3000 ? f.content.slice(0, 3000) + "\n[truncated]" : f.content;
           const ctx = f.context ? ` (${f.context})` : "";
           text += `\n\n---\nCompany Document ${i + 1}: ${f.name}${ctx}\n${truncated}`;
         });
@@ -760,7 +739,7 @@ export default function App() {
     lFiles.forEach(f => {
       const ctx = f.context ? ` (${f.context})` : "";
       if (f.contentType === "text") {
-        const truncated = f.content.length > 5000 ? f.content.slice(0, 5000) + "\n[truncated]" : f.content;
+        const truncated = f.content.length > 3000 ? f.content.slice(0, 3000) + "\n[truncated]" : f.content;
         parts.push({ type: "text", text: `\n---\nLearner Document: ${f.name}${ctx}\n${truncated}` });
       } else {
         parts.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: f.content } });
@@ -777,7 +756,7 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 5000,
+        max_tokens: 2000,
         system: sysPrompt || buildSystemPrompt(mode, selectedFn, selectedRole),
         messages: history.map(({ role, content }) => ({ role, content })),
       }),
@@ -958,7 +937,7 @@ export default function App() {
           <div className="answer-chip">
             <span className="chip-label">Company context</span>
             <span className="chip-val">
-              {[companyCtx.methodology && "methodology", companyCtx.icp && "ICP", companyCtx.files?.length > 0 && `${companyCtx.files.length} file(s)`].filter(Boolean).join(" · ")}
+              {[companyCtx.methodology && "methodology", companyCtx.icp && "ICP", companyCtx.tools && "tools", companyCtx.files?.length > 0 && `${companyCtx.files.length} file(s)`].filter(Boolean).join(" · ")}
             </span>
           </div>
         )}
@@ -1014,10 +993,6 @@ export default function App() {
     .cc-input-single { width: 100%; background: #0d0f14; border: 1px solid #2a2d38; border-radius: 9px; padding: 0.65rem 1rem; font-family: 'DM Sans', sans-serif; font-size: 0.85rem; font-weight: 300; color: #e8e4dc; outline: none; transition: border-color 0.2s; }
     .cc-input-single:focus { border-color: #c8a96e; }
     .cc-input-single::placeholder { color: #3a3d4a; }
-    .methodology-grid { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.35rem; }
-    .method-btn { font-family: 'DM Sans', sans-serif; font-size: 0.8rem; font-weight: 400; color: #8a8d9a; background: #0d0f14; border: 1px solid #2a2d38; border-radius: 8px; padding: 0.45rem 0.9rem; cursor: pointer; transition: all 0.12s; }
-    .method-btn:hover { border-color: #4a4d5a; color: #e8e4dc; }
-    .method-btn.selected { border-color: #c8a96e; color: #e8c87a; background: rgba(200,169,110,0.08); }
     .progress-bar { height: 2px; background: #1e2130; border-radius: 2px; margin-bottom: 2rem; overflow: hidden; }
     .progress-fill { height: 100%; background: linear-gradient(90deg, #c8a96e, #e8c87a); border-radius: 2px; transition: width 0.4s ease; }
     .step-label { font-size: 0.68rem; font-weight: 500; letter-spacing: 0.15em; text-transform: uppercase; color: #c8a96e; margin-bottom: 0.6rem; }
